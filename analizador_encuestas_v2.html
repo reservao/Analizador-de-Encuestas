@@ -1509,6 +1509,34 @@ function findCol(q, headers) {
   }
   return null;
 }
+// Texto literal de cada ítem WE1-WE9/EX1-EX4, usado como respaldo cuando el archivo
+// trae el texto completo de la pregunta como encabezado en vez del código corto
+// (ej. plantillas "Consolidado" que exportan la pregunta tal cual). Se prueban varias
+// variantes de redacción observadas entre distintas exportaciones de la plataforma.
+const ITEM_CODE_TEXTS = {
+  WE1: ['En mi trabajo me siento lleno de energía', 'Mientras trabajo me siento lleno de energía'],
+  WE2: ['En mi trabajo, me siento fuerte y energizado', 'Mientras trabajo me siento fuerte y energizado'],
+  WE3: ['Me entusiasma mi trabajo'],
+  WE4: ['Mi trabajo me inspira'],
+  WE5: ['Cuando me levanto en la mañana, siento ganas de empezar a trabajar.', 'Cuando me levanto en la mañana, siento ganas de trabajar'],
+  WE6: ['Me siento feliz cuando estoy trabajando intensamente'],
+  WE7: ['Me enorgullezco del trabajo que realizo'],
+  WE8: ['Cuando estoy trabajando, me olvido de todo lo que me rodea'],
+  WE9: ['Cuando estoy trabajando, pierdo la noción del tiempo'],
+  EX1: ['Hay días en los que me siento cansado antes de empezar a trabajar.', 'Hay días en los que me siento cansado antes de empezar a  trabajar'],
+  EX2: ['Después del trabajo, tiendo a necesitar más tiempo que antes para relajarme y sentirme mejor'],
+  EX3: ['Durante el trabajo, a menudo me siento emocionalmente agotado'],
+  EX4: ['Después del trabajo, normalmente me siento desgastado y cansado'],
+};
+// Busca un ítem por código y, si no lo encuentra, por su texto literal conocido.
+// Devuelve el nombre de columna (string) o null — mismo contrato que findCol().
+function itemTextCol(code, headers) {
+  const found = findCol(code, headers);
+  if (found) return found;
+  const texts = ITEM_CODE_TEXTS[code] || [];
+  for (const t of texts) { const c = findCol(t, headers); if (c) return c; }
+  return null;
+}
 function findSysCol(dim, headers) {
   // norm extendida: también quita guiones bajos (SELF_EFFICACY → selfefficacy)
   const nrm = s => norm(s).replace(/_/g, '');
@@ -5225,6 +5253,16 @@ function rcpColIdxFuzzy(col) {
     return false;
   });
 }
+// Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido
+// (ITEM_CODE_TEXTS, definido junto a findCol) — para archivos que traen el texto de la
+// pregunta como encabezado en vez del código corto.
+function rcpItemIdx(code) {
+  let i = rcpColIdxFuzzy(code);
+  if (i >= 0) return i;
+  const texts = ITEM_CODE_TEXTS[code] || [];
+  for (const t of texts) { i = rcpColIdxFuzzy(t); if (i >= 0) return i; }
+  return -1;
+}
 function rcpMean(rows, col) {
   const idx = rcpColIdxFuzzy(col);
   if (idx<0) return null;
@@ -6209,7 +6247,7 @@ function rcpGenerate() {
         // Alto Engagement: Vigor, Dedicación y Absorción promedian >=5 CADA UNA, simultáneamente
         // (NO el promedio general de los 9 ítems >=4.5, que sobreestima el %)
         const subGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
-        const subIdxs = subGroups.map(g => g.map(c => rcpColIdxFuzzy(c)).filter(i => i >= 0));
+        const subIdxs = subGroups.map(g => g.map(c => rcpItemIdx(c)).filter(i => i >= 0));
         if (!subIdxs.every(g => g.length) || !rows.length) return null;
         const count = rows.filter(r => subIdxs.every(idxs => {
           const vs = idxs.map(i => parseFloat(r[i])).filter(v => !isNaN(v));
@@ -6218,7 +6256,7 @@ function rcpGenerate() {
         return +(count/rows.length*100).toFixed(1);
       } else {
         // Alto Agotamiento: promedio EX1-EX4 >= 3.25
-        const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpColIdxFuzzy(c)).filter(i => i >= 0);
+        const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
         if (!exIdxs.length || !rows.length) return null;
         const count = rows.filter(r => {
           const vs = exIdxs.map(i => parseFloat(r[i])).filter(v => !isNaN(v));
@@ -7457,9 +7495,9 @@ function rcpGenerate() {
         altoEng = rows.filter(r=>parseFloat(r[engBinIdx])===1).length;
       } else {
         const weG = [['WE1','WE2','WE5'],['WE3','WE4','WE7'],['WE6','WE8','WE9']];
-        const hasWE = weG.flat().some(c => rcpColIdxFuzzy(c) >= 0);
+        const hasWE = weG.flat().some(c => rcpItemIdx(c) >= 0);
         if (hasWE) altoEng = rows.filter(row => weG.every(items => {
-          const vals = items.map(c=>{ const i=rcpColIdxFuzzy(c); return i>=0?parseFloat(row[i]):NaN; }).filter(v=>!isNaN(v));
+          const vals = items.map(c=>{ const i=rcpItemIdx(c); return i>=0?parseFloat(row[i]):NaN; }).filter(v=>!isNaN(v));
           return vals.length && vals.reduce((a,b)=>a+b,0)/vals.length >= 5;
         })).length;
       }
@@ -7467,7 +7505,7 @@ function rcpGenerate() {
       if (agoBinIdx >= 0) {
         altoAgo = rows.filter(r=>parseFloat(r[agoBinIdx])===1).length;
       } else {
-        const exIdxs = ['EX1','EX2','EX3','EX4'].map(c=>rcpColIdxFuzzy(c)).filter(i=>i>=0);
+        const exIdxs = ['EX1','EX2','EX3','EX4'].map(c=>rcpItemIdx(c)).filter(i=>i>=0);
         if (exIdxs.length) altoAgo = rows.filter(row => {
           const vals = exIdxs.map(i=>parseFloat(row[i])).filter(v=>!isNaN(v));
           return vals.length && vals.reduce((a,b)=>a+b,0)/vals.length >= 3.25;
@@ -7925,6 +7963,15 @@ function rColIdx(name) {
   });
 }
 
+// Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido
+// (ITEM_CODE_TEXTS, definido junto a findCol).
+function rItemIdx(code) {
+  let i = rColIdx(code);
+  if (i >= 0) return i;
+  const texts = ITEM_CODE_TEXTS[code] || [];
+  for (const t of texts) { i = rColIdx(t); if (i >= 0) return i; }
+  return -1;
+}
 function rMean(rows, col) {
   const idx = rColIdx(col);
   if (idx < 0) return null;
@@ -7973,10 +8020,10 @@ function rCalcAltoEng(rows) {
     return rows.length ? Math.round(count / rows.length * 100) : null;
   }
   const weGroups = [['WE1','WE2','WE5'],['WE3','WE4','WE7'],['WE6','WE8','WE9']];
-  const hasItems = weGroups.flat().some(c => rColIdx(c) >= 0);
+  const hasItems = weGroups.flat().some(c => rItemIdx(c) >= 0);
   if (!hasItems) return null;
   const count = rows.filter(row => weGroups.every(items => {
-    const vals = items.map(c => { const i=rColIdx(c); return i>=0?parseFloat(row[i]):NaN; }).filter(v=>!isNaN(v));
+    const vals = items.map(c => { const i=rItemIdx(c); return i>=0?parseFloat(row[i]):NaN; }).filter(v=>!isNaN(v));
     return vals.length && vals.reduce((a,b)=>a+b,0)/vals.length >= 5;
   })).length;
   return Math.round(count / rows.length * 100);
@@ -7993,7 +8040,7 @@ function rCalcAltoAgo(rows) {
     return rows.length ? Math.round(count / rows.length * 100) : null;
   }
   const exItems = ['EX1','EX2','EX3','EX4'];
-  const exIdxs = exItems.map(c => rColIdx(c)).filter(i => i >= 0);
+  const exIdxs = exItems.map(c => rItemIdx(c)).filter(i => i >= 0);
   if (!exIdxs.length) return null;
   const count = rows.filter(row => {
     const vals = exIdxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
@@ -8842,7 +8889,7 @@ function ropCalcDim(dimId, rows) {
 function ropCalcEng(rows) {
   const dim = MAESTRO.find(d => d.id === 'engagement');
   if (!dim) return {avg:null, pct:null};
-  let qCols = dim.preguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let qCols = dim.preguntas.map(q => itemTextCol(q, ROP.headers)).filter(Boolean);
   if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
 
   // Promedio general (todos los ítems / columna pre-calculada)
@@ -8873,7 +8920,7 @@ function ropCalcEng(rows) {
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
   } else {
     const subGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
-    const subCols = subGroups.map(g => g.map(q => findCol(q, ROP.headers)).filter(Boolean));
+    const subCols = subGroups.map(g => g.map(q => itemTextCol(q, ROP.headers)).filter(Boolean));
     if (subCols.every(g => g.length) && rows.length) {
       const count = rows.filter(r => subCols.every(cols => {
         const vs = cols.map(c => parseFloat(r[ROP.headers.indexOf(c)])).filter(v => !isNaN(v));
@@ -8888,7 +8935,7 @@ function ropCalcEng(rows) {
 function ropCalcAgot(rows) {
   const dim = MAESTRO.find(d => d.id === 'agotamiento');
   if (!dim) return {avg:null, pct:null};
-  let qCols = dim.preguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let qCols = dim.preguntas.map(q => itemTextCol(q, ROP.headers)).filter(Boolean);
   if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
 
   // Promedio general (todos los ítems / columna pre-calculada)

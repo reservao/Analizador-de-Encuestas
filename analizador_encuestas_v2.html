@@ -9021,12 +9021,18 @@ function ropGenerate() {
     });
   });
 
+  // Si se está comparando el mismo segmento entre mediciones distintas, la medición
+  // debe quedar en la etiqueta (si no, ambos filtros se ven idénticos). Si todas las
+  // mediciones comparadas son la misma, no hace falta repetirla en cada etiqueta.
+  const ropAllSameMed = ROP.filters.every(f => f.medicion === ROP.filters[0].medicion);
   const filterSets = ROP.filters.map(f => {
     const rows = ropFilterRows(ROP.rows, f.medicion, f.clasificaciones);
     const orgRows = ropFilterRows(ROP.rows, f.medicion, null);
     const segs = f.clasificaciones.filter(c => c.clascol && c.segmento).map(c => c.segmento);
     const medLabel = ropHideMedLabel ? '' : f.medicion;
-    const titleLabel = segs.length ? segs.join(' › ') : medLabel;
+    const titleLabel = segs.length
+      ? (medLabel && !ropAllSameMed ? medLabel + ' · ' + segs.join(' › ') : segs.join(' › '))
+      : medLabel;
     return { rows, orgRows, label: medLabel, titleLabel };
   });
 

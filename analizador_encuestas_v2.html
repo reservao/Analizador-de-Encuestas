@@ -9025,6 +9025,8 @@ function ropGenerate() {
   // debe quedar en la etiqueta (si no, ambos filtros se ven idénticos). Si todas las
   // mediciones comparadas son la misma, no hace falta repetirla en cada etiqueta.
   const ropAllSameMed = ROP.filters.every(f => f.medicion === ROP.filters[0].medicion);
+  const segKey = f => f.clasificaciones.filter(c => c.clascol && c.segmento).map(c => c.clascol+':'+c.segmento).join('|');
+  const ropAllSameSeg = ROP.filters.every(f => segKey(f) === segKey(ROP.filters[0]));
   const filterSets = ROP.filters.map(f => {
     const rows = ropFilterRows(ROP.rows, f.medicion, f.clasificaciones);
     const orgRows = ropFilterRows(ROP.rows, f.medicion, null);
@@ -9033,7 +9035,11 @@ function ropGenerate() {
     const titleLabel = segs.length
       ? (medLabel && !ropAllSameMed ? medLabel + ' · ' + segs.join(' › ') : segs.join(' › '))
       : medLabel;
-    return { rows, orgRows, label: medLabel, titleLabel };
+    // Etiqueta corta para columnas de gráfico (Engagement/Agotamiento/eNPS): si se compara
+    // el MISMO segmento entre mediciones distintas, el segmento ya se ve como título de la
+    // página — en cada columna basta con la medición/año para diferenciarlas.
+    const chartLabel = (segs.length && ropAllSameSeg && !ropAllSameMed) ? (medLabel || titleLabel) : titleLabel;
+    return { rows, orgRows, label: medLabel, titleLabel, chartLabel };
   });
 
   if (!filterSets[0].rows.length) { alert('No hay datos para la selección base.'); return; }
@@ -9362,7 +9368,7 @@ function ropRenderEng(filterSets, showOrg) {
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaEng = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
-  const labels = filterSets.map(fs => [(fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
+  const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
   const engVals = filterSets.map(fs => ropCalcEng(fs.rows));
 
   ROP.charts.eng = new Chart(document.getElementById('rop-chart-eng'), {
@@ -9405,7 +9411,7 @@ function ropRenderAgot(filterSets, showOrg) {
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaAgot = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
-  const labels = filterSets.map(fs => [(fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
+  const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
   const agotVals = filterSets.map(fs => ropCalcAgot(fs.rows));
 
   ROP.charts.agot = new Chart(document.getElementById('rop-chart-agot'), {
@@ -9593,7 +9599,7 @@ function ropRenderENPS(filterSets) {
     s.rows.length === 0 ? 'nodata' : s.rows.length < ROP_N_MIN ? 'confidential' : !s.enps ? 'nodata' : 'ok'
   );
 
-  const chartLabels = allSets.map(s => s.titleLabel || s.label);
+  const chartLabels = allSets.map(s => s.chartLabel || s.titleLabel || s.label);
   const scores = allSets.map(s => s.enps?.score ?? null);
 
   const pct = (key) => allSets.map((s, i) => filterMetaEnps[i] === 'ok' ? s.enps[key] / s.enps.total * 100 : null);

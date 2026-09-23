@@ -9746,13 +9746,21 @@ function ropBatchBuildList(clasCols, mode, rowPool, accumulated) {
 }
 
 // Renderiza el One Page para un conjunto de filtros y captura la imagen.
+// Aplica la clasificación que se está iterando en el lote (filterSpec) a CADA
+// medición seleccionada en el panel (BASE + comparativos) — antes solo usaba la
+// medición del filtro BASE e ignoraba los comparativos agregados.
 async function ropBatchRenderOne(filterSpec) {
   const ropHideTitle    = !!document.getElementById('rop-hide-title')?.checked;
   const ropHideMedLabel = !!document.getElementById('rop-hide-medlabel')?.checked;
-  const medicion = ROP.filters[0]?.medicion;
-  const rows    = ropFilterRows(ROP.rows, medicion, filterSpec.clasificaciones);
-  const orgRows = ropFilterRows(ROP.rows, medicion, null);
-  const filterSets = [{ rows, orgRows, label: ropHideMedLabel ? '' : (medicion || ''), titleLabel: filterSpec.titleLabel }];
+  const ropAllSameMed = ROP.filters.every(f => f.medicion === ROP.filters[0].medicion);
+  const filterSets = ROP.filters.map(f => {
+    const rows    = ropFilterRows(ROP.rows, f.medicion, filterSpec.clasificaciones);
+    const orgRows = ropFilterRows(ROP.rows, f.medicion, null);
+    const medLabel = ropHideMedLabel ? '' : f.medicion;
+    const titleLabel = medLabel && !ropAllSameMed ? medLabel + ' · ' + filterSpec.titleLabel : filterSpec.titleLabel;
+    const chartLabel = medLabel || filterSpec.titleLabel;
+    return { rows, orgRows, label: medLabel, titleLabel, chartLabel };
+  });
 
   // Destruir gráficos previos
   Object.keys(ROP.charts).forEach(k => { if (ROP.charts[k]) { ROP.charts[k].destroy(); ROP.charts[k] = null; } });

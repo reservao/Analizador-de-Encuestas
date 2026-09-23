@@ -9025,7 +9025,10 @@ function ropGenerate() {
   // debe quedar en la etiqueta (si no, ambos filtros se ven idénticos). Si todas las
   // mediciones comparadas son la misma, no hace falta repetirla en cada etiqueta.
   const ropAllSameMed = ROP.filters.every(f => f.medicion === ROP.filters[0].medicion);
-  const segKey = f => f.clasificaciones.filter(c => c.clascol && c.segmento).map(c => c.clascol+':'+c.segmento).join('|');
+  // Compara solo por el texto del segmento (no por la columna de clasificación de origen):
+  // si dos filtros muestran el mismo nombre de segmento, deben tratarse como "el mismo
+  // segmento" aunque provengan de columnas de clasificación distintas.
+  const segKey = f => f.clasificaciones.filter(c => c.clascol && c.segmento).map(c => c.segmento).join('|');
   const ropAllSameSeg = ROP.filters.every(f => segKey(f) === segKey(ROP.filters[0]));
   const filterSets = ROP.filters.map(f => {
     const rows = ropFilterRows(ROP.rows, f.medicion, f.clasificaciones);

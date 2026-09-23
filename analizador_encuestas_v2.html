@@ -9672,6 +9672,9 @@ function ropDownloadPNG() {
       link.download = `OnePage_${title || 'reporte'}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
+    }).catch(err => {
+      console.error('[ropDownloadPNG] Error al capturar/exportar:', err);
+      alert('No se pudo generar el PNG. Revisa la consola del navegador (F12) para más detalle.\n\n' + (err?.message || err));
     });
   };
   if (typeof html2canvas !== 'undefined') {

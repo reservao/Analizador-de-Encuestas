@@ -1372,6 +1372,7 @@ tr:hover td { background: var(--bg); }
           </div>
 
         </div>
+        <div id="rop-footnote" style="display:none;padding:5px 14px;font-size:9.5px;color:#64748b;text-align:center;border-top:1px solid #e2e8f0"></div>
         </div><!-- /rop-export-frame -->
 
         <!-- Panel exportar lote PPT -->
@@ -9038,19 +9039,43 @@ function ropGenerate() {
     const titleLabel = segs.length
       ? (medLabel && !ropAllSameMed ? medLabel + ' · ' + segs.join(' › ') : segs.join(' › '))
       : medLabel;
-    // Etiqueta corta para columnas de gráfico (Engagement/Agotamiento/eNPS): si se compara
-    // el MISMO segmento entre mediciones distintas, el segmento ya se ve como título de la
-    // página — en cada columna basta con la medición/año para diferenciarlas.
-    const chartLabel = (segs.length && ropAllSameSeg && !ropAllSameMed) ? (medLabel || titleLabel) : titleLabel;
-    return { rows, orgRows, label: medLabel, titleLabel, chartLabel };
+    // Etiqueta corta para columnas de gráfico (Engagement/Agotamiento/eNPS): al comparar
+    // (mismo segmento entre años, o segmentos distintos), el/los segmento(s) ya se ven en
+    // el título de la página y/o la nota al pie — en cada columna basta con la medición/año.
+    const chartLabel = segs.length ? (medLabel || segs.join(' › ')) : titleLabel;
+    return { rows, orgRows, label: medLabel, titleLabel, chartLabel, segs };
   });
 
   if (!filterSets[0].rows.length) { alert('No hay datos para la selección base.'); return; }
 
   const title = filterSets.map(fs => fs.titleLabel).join(' vs. ');
   document.getElementById('rop-title-bar').textContent = ropHideTitle ? '' : title;
-  // rop-seg-title está DENTRO del marco capturable — controla lo que aparece en el PNG/PPT exportado
-  document.getElementById('rop-seg-title').textContent = ropHideTitle ? '' : filterSets[0].titleLabel;
+
+  // Título de la página (dentro del marco capturable → va en el PNG/PPT exportado):
+  // solo el nombre del segmento de la medición más reciente (ej. "2026" si se compara
+  // contra años anteriores). Si las mediciones no son numéricas, se usa el primer filtro.
+  const medsAsNum = ROP.filters.map(f => parseInt(f.medicion, 10));
+  const primaryIdx = medsAsNum.every(n => !isNaN(n))
+    ? medsAsNum.indexOf(Math.max(...medsAsNum))
+    : 0;
+  const primaryFs = filterSets[primaryIdx];
+  const pageSegLabel = primaryFs.segs.length ? primaryFs.segs.join(' › ') : primaryFs.titleLabel;
+  document.getElementById('rop-seg-title').textContent = ropHideTitle ? '' : pageSegLabel;
+
+  // Nota al pie (también dentro del marco capturable): si se están comparando segmentos
+  // distintos entre sí, se listan todos para no perder esa información — como el título
+  // y las columnas del gráfico ahora solo muestran uno o el año.
+  const footEl = document.getElementById('rop-footnote');
+  if (footEl) {
+    const allSegNames = [...new Set(filterSets.flatMap(fs => fs.segs))];
+    if (!ropHideTitle && !ropAllSameSeg && allSegNames.length > 1) {
+      footEl.textContent = 'Segmentos comparados: ' + allSegNames.join(' · ');
+      footEl.style.display = 'block';
+    } else {
+      footEl.textContent = '';
+      footEl.style.display = 'none';
+    }
+  }
 
   Object.keys(ROP.charts).forEach(k => { if (ROP.charts[k]) { ROP.charts[k].destroy(); ROP.charts[k]=null; } });
 
@@ -9736,6 +9761,9 @@ async function ropBatchRenderOne(filterSpec) {
   // Actualizar títulos (rop-seg-title está dentro del marco capturable)
   document.getElementById('rop-title-bar').textContent = ropHideTitle ? '' : filterSpec.titleLabel;
   document.getElementById('rop-seg-title').textContent  = ropHideTitle ? '' : filterSpec.titleLabel;
+  // El lote exporta un segmento a la vez — no aplica la nota de "segmentos comparados"
+  const batchFootEl = document.getElementById('rop-footnote');
+  if (batchFootEl) { batchFootEl.textContent = ''; batchFootEl.style.display = 'none'; }
 
   // Renderizar
   const showOrg = document.getElementById('rop-show-org')?.checked ?? true;

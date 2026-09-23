@@ -9776,11 +9776,19 @@ async function ropBatchRenderOne(filterSpec) {
   ropRenderENPS(filterSets);
 
   // Esperar a que Chart.js termine de pintar (RAF + margen)
-  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 700)));
+  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 900)));
 
-  // Capturar
+  // Capturar. En lotes con muchas láminas seguidas, a veces el marco no terminó de
+  // "asentarse" (gráficos recién destruidos/recreados) y html2canvas captura un
+  // canvas vacío de 0×0 — se reintenta varias veces antes de rendirse, para no
+  // dejar esa lámina en blanco.
   const frame = document.getElementById('rop-export-frame');
-  const canvas = await html2canvas(frame, { backgroundColor: '#fff', scale: 2, useCORS: true });
+  let canvas = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    canvas = await html2canvas(frame, { backgroundColor: '#fff', scale: 2, useCORS: true });
+    if (canvas.width && canvas.height) break;
+    await new Promise(r => setTimeout(r, 500 + attempt * 300));
+  }
   return canvas.toDataURL('image/png');
 }
 
@@ -9831,6 +9839,7 @@ async function ropBatchExport() {
     pptx.defineLayout({ name: 'ONEPAGE', width: 20, height: 10 });
     pptx.layout = 'ONEPAGE';
 
+    let failedSlides = 0;
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       statusEl.textContent = `Generando slide ${i + 1} / ${segments.length}: ${seg.titleLabel}`;
@@ -9838,9 +9847,13 @@ async function ropBatchExport() {
 
       try {
         const imgData = await ropBatchRenderOne(seg);
+        if (!imgData || !imgData.startsWith('data:image/png;base64,')) {
+          throw new Error('Captura vacía (el gráfico no llegó a pintarse a tiempo)');
+        }
         const slide = pptx.addSlide();
         slide.addImage({ data: imgData, x: 0, y: 0, w: 20, h: 10 });
       } catch (err) {
+        failedSlides++;
         console.warn('[batch] Error en slide:', seg.titleLabel, err);
       }
     }
@@ -9851,7 +9864,9 @@ async function ropBatchExport() {
     const medicion = ROP.filters[0]?.medicion || 'OnePage';
     await pptx.writeFile({ fileName: `OnePage_batch_${medicion}.pptx` });
 
-    statusEl.textContent = `✓ ${segments.length} slides descargados.`;
+    statusEl.textContent = failedSlides
+      ? `✓ ${segments.length - failedSlides} de ${segments.length} slides descargados (${failedSlides} fallaron — revisa la consola).`
+      : `✓ ${segments.length} slides descargados.`;
   } catch (err) {
     console.error('[batch] Error general:', err);
     statusEl.textContent = 'Error al generar el PPT. Revisa la consola.';

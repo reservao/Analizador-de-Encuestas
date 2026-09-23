@@ -9775,8 +9775,12 @@ async function ropBatchRenderOne(filterSpec) {
   ropRenderRD(filterSets);
   ropRenderENPS(filterSets);
 
-  // Esperar a que Chart.js termine de pintar (RAF + margen)
-  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 900)));
+  // Esperar a que Chart.js termine de pintar. Se usa setTimeout puro (no
+  // requestAnimationFrame): rAF se pausa/throttlea en pestañas sin foco o cuando el
+  // usuario cambia de ventana mientras se genera el lote, dejando la exportación
+  // "colgada" en silencio — con DevTools abierto Chrome no aplica esa pausa, por eso
+  // ahí sí funcionaba. setTimeout sigue corriendo igual esté o no la pestaña activa.
+  await new Promise(r => setTimeout(r, 900));
 
   // Capturar. En lotes con muchas láminas seguidas, a veces el marco no terminó de
   // "asentarse" (gráficos recién destruidos/recreados) y html2canvas captura un

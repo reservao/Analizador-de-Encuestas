@@ -9557,7 +9557,7 @@ function ropRenderRD(filterSets) {
 
   const filterMetaRD = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
   const rdNoteCount = filterMetaRD.filter(s => s !== 'ok').length;
-  const datasets = filterSets.map((fs, i) => {
+  const barDatasets = filterSets.map((fs, i) => {
     const bgColors = i === 0
       ? dimColors0.slice(0, dims.length)
       : dims.map(() => i === 1 ? compGray : compAmber);
@@ -9569,6 +9569,13 @@ function ropRenderRD(filterSets) {
       borderRadius:3,
     };
   });
+  // La medición base (coloreada) va a la derecha de cada par y el comparativo (gris)
+  // a la izquierda — el orden de aparición en "datasets" define la posición
+  // izquierda→derecha dentro de cada grupo en un bar chart agrupado de Chart.js.
+  const datasets = barDatasets.length > 1 ? [...barDatasets].reverse() : barDatasets.slice();
+  // Índice del dataset base (coloreado) dentro de "datasets" tras el reordenamiento —
+  // usado más abajo para que la leyenda siga mostrando el dataset correcto.
+  const baseDatasetIdx = barDatasets.length > 1 ? barDatasets.length - 1 : 0;
 
   // Org average reference line from filter[0]
   datasets.push({
@@ -9607,7 +9614,7 @@ function ropRenderRD(filterSets) {
             filter: (item, data) => {
               const ds = data.datasets[item.datasetIndex];
               if (ds.type === 'line') return true;  // mostrar líneas de referencia
-              return item.datasetIndex === 0;        // solo primer dataset de barras (azul)
+              return item.datasetIndex === baseDatasetIdx; // solo el dataset base (color)
             }
           }
         },

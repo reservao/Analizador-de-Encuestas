@@ -6674,14 +6674,19 @@ function rcpGenerate() {
     const barBorder = dims.map(d => (RD_COLORS[d.col] || ['rgba(27,63,110,0.85)','rgba(27,63,110,1)'])[1]);
     const hasComp   = !!compMed;
 
-    const datasets = [{
+    // La barra de la medición base (coloreada) va a la DERECHA de cada par y la del
+    // comparativo (gris) a la IZQUIERDA — por eso el dataset del comparativo se agrega
+    // primero al arreglo: en un bar chart agrupado de Chart.js, el orden de aparición
+    // dentro de "datasets" es lo que define la posición izquierda→derecha en cada grupo.
+    const mainDataset = {
       label: mainLabel,
       data: dims.map(d=>{ const v=rcpMean(mainRows,d.col); return v!==null?+v.toFixed(3):null; }),
       backgroundColor: barBg, borderColor: barBorder, borderWidth: 0,
       borderRadius: {topLeft:6,topRight:6,bottomLeft:0,bottomRight:0}, borderSkipped: false,
       categoryPercentage: 0.85, barPercentage: hasComp ? 1.0 : 0.75, order: 2,
-    }];
+    };
 
+    const datasets = [];
     if(hasComp) {
       const compSeg    = rcpGetParam('comp_seg') || '';
       const compSegVal = rcpGetParam('comp_seg_val') || '';
@@ -6699,6 +6704,7 @@ function rcpGenerate() {
         borderSkipped: false, categoryPercentage: 0.85, barPercentage: 1.0, order: 3,
       });
     }
+    datasets.push(mainDataset);
 
     rdLines.forEach(({src, color}, li) => {
       let lineRows, lineLabel;

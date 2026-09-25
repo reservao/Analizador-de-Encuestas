@@ -5244,9 +5244,14 @@ function rcpColIdxFuzzy(col) {
   if (idx >= 0) return idx;
   // Nivel 3: fuzzy — el encabezado contiene el nombre como parte de su token
   // Maneja formatos como "(WE1-1.5)", "Promedio Engagement", "WORK_ENGAGEMENT_D9"
+  // No cae en una columna binaria/indicadora (ej. "DEDICATION_BINARY") al buscar el
+  // promedio de una dimensión, salvo que la búsqueda misma sea explícitamente por eso
+  // — mismo bug que en rColIdx (R): "dedicationbinary".startsWith("dedication").
+  var queryWantsBinary = /binary|bynary|binario/i.test(nc);
   return RCP.headers.findIndex(h => {
     if (!h) return false;
     var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
+    if (!queryWantsBinary && /binary|bynary|binario/i.test(nh)) return false;
     if (nh === nc) return true;
     var parts = h.split(/[-_()\s.]/);
     if (parts.some(p => rcpNorm(p).replace(/_/g,'') === nc)) return true;
@@ -7860,15 +7865,15 @@ function rDdr(e) {
 const R_DIMS = [
   { nombre:'Engagement', cols:['WORK_ENGAGEMENT','ENGD9','Engagement','engagement'],
     sub:[
-      { nombre:'Promedio Vigor',      cols:['VIGOR'],
+      { nombre:'Promedio Vigor',      cols:['VIGOR','Vigor'],
         items:[['WE1','En mi trabajo me siento lleno de energía'],
                ['WE2','En mi trabajo, me siento fuerte y energizado'],
                ['WE5','Cuando me levanto en la mañana, siento ganas de empezar a trabajar.']]},
-      { nombre:'Promedio Dedicación', cols:['DEDICATION'],
+      { nombre:'Promedio Dedicación', cols:['DEDICATION','DEDICACION','Dedicación','Dedicacion'],
         items:[['WE3','Me entusiasma mi trabajo'],
                ['WE4','Mi trabajo me inspira'],
                ['WE7','Me enorgullezco del trabajo que realizo']]},
-      { nombre:'Promedio Absorción',  cols:['ABSORTION'],
+      { nombre:'Promedio Absorción',  cols:['ABSORTION','ABSORCION','Absorción','Absorcion'],
         items:[['WE6','Me siento feliz cuando estoy trabajando intensamente'],
                ['WE8','Cuando estoy trabajando, me olvido de todo lo que me rodea'],
                ['WE9','Cuando estoy trabajando, pierdo la noción del tiempo']]},
@@ -7958,8 +7963,14 @@ function rColIdx(name) {
   const normExact = R.headers.findIndex(h => rNorm(h) === nq);
   if (normExact >= 0) return normExact;
   // 3. Fuzzy: header contains the code as a word-part (handles "(WE1-1.5)", "(EX1)", etc.)
+  // Nunca cae aquí en una columna binaria/indicadora (ej. "DEDICATION_BINARY") cuando
+  // se busca el promedio de la dimensión — "dedicationbinary".startsWith("dedication")
+  // es verdadero y antes hacía que el promedio se calculara sobre un 0/1 en vez de la
+  // escala real. Se excluye salvo que la búsqueda misma sea explícitamente por eso.
+  const queryWantsBinary = /binary|bynary|binario/i.test(nq);
   return R.headers.findIndex(h => {
     const nh = rNorm(h);
+    if (!queryWantsBinary && /binary|bynary|binario/i.test(nh)) return false;
     const parts = h.split(/[-_()\s.]/);
     if (parts.some(p => rNorm(p) === nq)) return true;
     if (nh.startsWith(nq) || nh.endsWith(nq)) return true;
@@ -7985,6 +7996,14 @@ function rMean(rows, col) {
   const vals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v));
   return vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : null;
 }
+// Promedio de un ítem por código; si el archivo trae el texto literal de la pregunta
+// como encabezado en vez del código corto (oppor1, coach1, WE1...), reintenta con ese
+// texto (segundo elemento de los pares [code,text] de R_DIMS/sub.items).
+function rMeanItem(rows, code, text) {
+  const v = rMean(rows, code);
+  if (v !== null) return v;
+  return text ? rMean(rows, text) : null;
+}
 
 function rDimMean(rows, dim) {
   // 1. Try named columns first
@@ -7994,19 +8013,14 @@ function rDimMean(rows, dim) {
   }
   // 2. Try averaging sub-dimension columns (e.g. Engagement = avg(VIGOR, DEDICATION, ABSORTION))
   if (dim.sub && dim.sub.length) {
-    const subVals = dim.sub.map(s => {
-      for (const c of s.cols) { const v = rMean(rows, c); if (v !== null) return v; }
-      return null;
-    }).filter(v => v !== null);
+    const subVals = dim.sub.map(s => rSubDimMean(rows, s)).filter(v => v !== null);
     if (subVals.length === dim.sub.length) {
       return +(subVals.reduce((a,b)=>a+b,0)/subVals.length).toFixed(2);
     }
   }
-  // 3. Fallback: calc from individual question items
-  const itemCols = (dim.items||[]).map(it=>it[0]).concat(
-    (dim.sub||[]).flatMap(s=>s.items.map(it=>it[0]))
-  );
-  const vals = itemCols.map(c=>rMean(rows,c)).filter(v=>v!==null);
+  // 3. Fallback: calc from individual question items (código o texto literal de la pregunta)
+  const itemPairs = (dim.items||[]).concat((dim.sub||[]).flatMap(s=>s.items));
+  const vals = itemPairs.map(([qc,ql])=>rMeanItem(rows,qc,ql)).filter(v=>v!==null);
   return vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : null;
 }
 
@@ -8015,7 +8029,7 @@ function rSubDimMean(rows, sub) {
     const v = rMean(rows, c);
     if (v !== null) return v;
   }
-  const itemVals = sub.items.map(([qc]) => rMean(rows, qc)).filter(v => v !== null);
+  const itemVals = sub.items.map(([qc,ql]) => rMeanItem(rows, qc, ql)).filter(v => v !== null);
   return itemVals.length ? +(itemVals.reduce((a,b)=>a+b,0)/itemVals.length).toFixed(2) : null;
 }
 
@@ -8082,7 +8096,7 @@ function rBuildRows(groups) {
         if (subVals.some(v => v !== null)) {
           out.push([sub.nombre, 'subdim', ...subVals]);
           for (const [qc, ql] of sub.items) {
-            const itemVals = groups.map(g => g.rows.length ? rMean(g.rows, qc) : null);
+            const itemVals = groups.map(g => g.rows.length ? rMeanItem(g.rows, qc, ql) : null);
             if (itemVals.some(v => v !== null)) out.push([ql, 'item', ...itemVals]);
           }
         }
@@ -8090,7 +8104,7 @@ function rBuildRows(groups) {
     }
     if (dim.items) {
       for (const [qc, ql] of dim.items) {
-        const itemVals = groups.map(g => g.rows.length ? rMean(g.rows, qc) : null);
+        const itemVals = groups.map(g => g.rows.length ? rMeanItem(g.rows, qc, ql) : null);
         if (itemVals.some(v => v !== null)) out.push([ql, 'item', ...itemVals]);
       }
     }

@@ -138,8 +138,21 @@ casi siempre hay que replicarlo/arreglarlo en varios módulos a la vez (ver
    texto↔código de sub-dimensión de Vigor).
 3. **Bases con encabezados de texto literal en vez de códigos WE/EX** (común
    en archivos "Consolidado" que juntan varios años) — usar `itemTextCol`/
-   `rItemIdx`/`rcpItemIdx`, no `findCol`/`rColIdx`/`rcpColIdxFuzzy` a secas,
-   en cualquier cálculo que dependa de ítems individuales WE1-9/EX1-4.
+   `rItemIdx`/`rcpItemIdx`/`rMeanItem`, no `findCol`/`rColIdx`/`rcpColIdxFuzzy`/
+   `rMean` a secas, en cualquier cálculo que dependa de ítems individuales
+   (WE1-9/EX1-4 y también oppor/coach/feedb/soc/auto/optim/wp/cogn/emo/
+   rolcon/hassle — **todos** los ítems de `R_DIMS` tienen el par
+   `[código, texto]`, no solo Engagement/Agotamiento).
+3b. **`rColIdx`/`rcpColIdxFuzzy` pueden enganchar una columna `*_BINARY`
+   por error en la búsqueda aproximada** — ej. `rColIdx('DEDICATION')` sin
+   coincidencia exacta caía a "DEDICATION_BINARY" porque
+   `"dedicationbinary".startsWith("dedication")` es verdadero, dando un
+   promedio sin sentido (0/1 en vez de escala 1-6). Ya se excluyen columnas
+   `*_binary/*_bynary/*_binario` del nivel de búsqueda aproximada en ambas
+   funciones — pero si se agrega una dimensión nueva a `R_DIMS`/
+   `RCP_COL_ALIASES`, conviene darle explícitamente el alias en español
+   (ej. `'Dedicación'`) para que resuelva por coincidencia exacta/normalizada
+   (niveles 1-2) y ni siquiera necesite pasar por la búsqueda aproximada.
 4. **Chart.js: la propiedad `order` de un dataset manda sobre el orden del
    arreglo `datasets` para decidir la posición izquierda→derecha dentro de un
    grupo de barras.** Si dos datasets tienen `order` explícito y distinto,

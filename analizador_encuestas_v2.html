@@ -6683,7 +6683,7 @@ function rcpGenerate() {
       data: dims.map(d=>{ const v=rcpMean(mainRows,d.col); return v!==null?+v.toFixed(3):null; }),
       backgroundColor: barBg, borderColor: barBorder, borderWidth: 0,
       borderRadius: {topLeft:6,topRight:6,bottomLeft:0,bottomRight:0}, borderSkipped: false,
-      categoryPercentage: 0.85, barPercentage: hasComp ? 1.0 : 0.75, order: 2,
+      categoryPercentage: 0.85, barPercentage: hasComp ? 1.0 : 0.75, order: 3,
     };
 
     const datasets = [];
@@ -6701,7 +6701,7 @@ function rcpGenerate() {
         data: dims.map(d=>{ const v=rcpMean(compRows,d.col); return v!==null?+v.toFixed(3):null; }),
         backgroundColor: 'rgba(170,170,170,0.65)', borderColor: 'rgba(130,130,130,0.8)',
         borderWidth: 0, borderRadius: {topLeft:4,topRight:4,bottomLeft:0,bottomRight:0},
-        borderSkipped: false, categoryPercentage: 0.85, barPercentage: 1.0, order: 3,
+        borderSkipped: false, categoryPercentage: 0.85, barPercentage: 1.0, order: 2,
       });
     }
     datasets.push(mainDataset);

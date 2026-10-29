@@ -174,6 +174,19 @@ casi siempre hay que replicarlo/arreglarlo en varios módulos a la vez (ver
    página y leyenda de RD) de `chartLabel` (solo la medición/año, usado en las
    columnas de Engagement/Agotamiento/eNPS cuando hay segmentación — evita
    repetir el nombre del segmento en cada columna).
+9. **`ROP.clasCols` (columnas ofrecidas como "clasificación" para segmentar en
+   One Page) puede colar columnas de ítems/dimensiones** si el patrón de
+   exclusión por prefijo (`systemPattern` en `ropBuildFilters`) no cubre el
+   nombre exacto — ej. "Demandas Cognitivas"/"Demandas Emocionales" empiezan
+   con "Demandas", no con el prefijo de la sub-dimensión; "Oportunidades..."
+   no empieza con "oppor" (doble p en inglés vs. simple en español);
+   "Presión..." no empieza con "press". Si eso pasa, elegir esa columna como
+   segmento casi siempre da N=0 o N=1 (son respuestas numéricas, no
+   categorías) — mismo síntoma que "no lee bien a las personas". Ya se agregó
+   una exclusión adicional por coincidencia exacta contra los nombres de
+   `R_DIMS`, pero si aparece una base con dimensiones NO estándar (ítems como
+   `compr1-12`, `intent1-2`, `D1/D2/D4` en un caso real), hay que agregar sus
+   prefijos a mano — no hay forma de detectarlos genéricamente.
 
 ## Seguridad
 

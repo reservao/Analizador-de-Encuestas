@@ -8656,8 +8656,17 @@ function ropBuildFilters() {
   const skip = new Set([medCol]);
   // "emoc"→"emo" (los ítems son emo1..emo6, no arrancan con "emoc"); se agregan
   // vigor/absor/dedic/crit para cubrir VIGOR, ABSORTION/ABSORCION, DEDICATION/DEDICACION
-  // y sus variantes _BINARY, más CRIT ENG/AGOT/ORG.
-  const systemPattern = /^(SE|WE|EX|wp|soc|feedb|hassle|rolcon|oppor|coach|retro|colab|auto|agot|opt|press|cogn|emo|conf|trab|ENG|NPS|enps|riesgo|alto|bajo|binary|bynary|vigor|absor|dedic|crit)/i;
+  // y sus variantes _BINARY, más CRIT ENG/AGOT/ORG. "pres" (no solo "press") para que
+  // cubra "Presión..."; intent/desemp/esf/compr para ítems de bases extendidas (ej.
+  // Compromiso y Satisfacción Laboral, Proyección en la Organización).
+  const systemPattern = /^(SE|WE|EX|wp|soc|feedb|hassle|rolcon|oppor|coach|retro|colab|auto|agot|opt|pres|cogn|emo|conf|trab|ENG|NPS|enps|riesgo|alto|bajo|binary|bynary|vigor|absor|dedic|crit|intent|desemp|esf|compr)/i;
+  // Nombres de dimensión JDR tal como aparecen pre-calculados en el archivo (ej.
+  // "Oportunidades de Desarrollo", "Demandas Cognitivas") — no todos arrancan con un
+  // prefijo reconocible por systemPattern ("oportunidades" no empieza con "oppor", y
+  // "Demandas Cognitivas"/"Demandas Emocionales" empiezan por "Demandas", no por el
+  // código de la sub-dimensión), así que se excluyen también por coincidencia exacta
+  // contra el catálogo de dimensiones (R_DIMS, el más confiable — ver CLAUDE.md).
+  const dimNameSet = new Set(R_DIMS.flatMap(d => [norm(d.nombre), ...(d.sub ? d.sub.map(s => norm(s.nombre.replace(/^Promedio\s+/i,''))) : [])]));
   ROP.clasCols = ROP.headers.filter(h => {
     if (!h || skip.has(h)) return false;
     // Columnas de dimensión JDR pre-calculada, ej. "(demandasemocionales-jdr) - Demandas Emocionales":
@@ -8666,6 +8675,9 @@ function ropBuildFilters() {
     if (systemPattern.test(h)) return false;
     // También verificar con nombre normalizado (captura formatos como "(WE1) - texto")
     if (systemPattern.test(norm(h))) return false;
+    if (dimNameSet.has(norm(h))) return false;
+    // Códigos cortos tipo "D1"/"D2" de dimensiones extendidas no estándar
+    if (/^d\d+$/i.test(h)) return false;
     const vals = [...new Set(ROP.rows.map(r => String(r[ROP.headers.indexOf(h)]).trim()).filter(Boolean))];
     return vals.length >= 2 && vals.length <= 80;
   });

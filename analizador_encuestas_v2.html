@@ -8734,8 +8734,17 @@ function ropRenderFilterCards() {
       const clasOpts = `<option value=""${cls.clascol===''?' selected':''}>—</option>` +
         availCols.map(c => `<option value="${escHtml(c)}"${c===cls.clascol?' selected':''}>${escHtml(c)}</option>`).join('');
       const segs = ropGetSegmentosAtLevel(fi, li);
+      // Se muestra el N de cada segmento en el propio desplegable — ayuda a notar
+      // valores casi-duplicados en los datos (ej. "Gerencia Marketing" N=1 vs.
+      // "Gerencia de Marketing" N=8, que a simple vista parecen el mismo texto).
+      const segCountRows = cls.clascol ? ropGetRowsUpToLevel(fi, li) : [];
+      const segCi = cls.clascol ? ROP.headers.indexOf(cls.clascol) : -1;
       const segOpts = cls.clascol
-        ? segs.map(s => `<option value="${escHtml(s)}"${s===cls.segmento?' selected':''}>${escHtml(s)}</option>`).join('')
+        ? segs.map(s => {
+            const n = segCi >= 0 ? segCountRows.filter(r => String(r[segCi]).trim() === s).length : null;
+            const label = n !== null ? `${s} (N=${n})` : s;
+            return `<option value="${escHtml(s)}"${s===cls.segmento?' selected':''}>${escHtml(label)}</option>`;
+          }).join('')
         : `<option value="">—</option>`;
       const removeRowBtn = li > 0
         ? `<button style="background:none;border:none;cursor:pointer;font-size:13px;color:#ef4444;padding:0 2px;line-height:1;align-self:flex-end;margin-bottom:3px" onclick="ropRemoveClasLevel(${fi},${li})" title="Quitar nivel">×</button>`

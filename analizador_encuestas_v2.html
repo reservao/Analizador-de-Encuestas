@@ -7590,19 +7590,47 @@ function rcpGenerate() {
         });
 
         ctx.fillStyle = '#5B6B82';
-        ctx.font = '700 11px "DM Mono", monospace';
         ctx.textAlign = 'center';
+        const axisFont = 14;          // antes 11 — nombres de eje más grandes
+        const plusMinusGap = 54;      // separación aprox. del nombre hacia cada extremo del eje
+
+        // ── Eje Engagement (vertical, izquierda): arriba = más, abajo = menos ──
+        const engX = chartArea.left + 16;
+        const centerY = (top+bottom)/2;
+        ctx.font = `700 ${axisFont}px "DM Sans", sans-serif`;
+        const engLabelW = ctx.measureText('ENGAGEMENT').width;
         ctx.save();
-        ctx.translate(chartArea.left + 16, (top+bottom)/2);
+        ctx.translate(engX, centerY);
         ctx.rotate(-Math.PI/2);
         ctx.fillText('ENGAGEMENT', 0, 0);
         ctx.restore();
         // La flecha va sin rotar (si se dibuja junto al texto rotado, el glifo "↑"
-        // termina apuntando hacia la izquierda en vez de hacia arriba).
-        ctx.font = '700 13px "DM Mono", monospace';
-        ctx.fillText('↑', chartArea.left + 16, top + 14);
-        ctx.font = '700 11px "DM Mono", monospace';
-        ctx.fillText('← AGOTAMIENTO', (left+right)/2, chartArea.bottom - 8);
+        // termina apuntando hacia la izquierda en vez de hacia arriba) y pegada al
+        // extremo superior del nombre.
+        ctx.font = `700 ${axisFont}px "DM Mono", monospace`;
+        const engArrowY = centerY - engLabelW/2 - 6;
+        ctx.fillText('↑', engX, engArrowY);
+        ctx.font = `800 ${axisFont+2}px "DM Sans", sans-serif`;
+        ctx.fillText('+', engX, Math.max(top + 16, engArrowY - plusMinusGap));
+        ctx.fillText('−', engX, Math.min(bottom - 6, centerY + engLabelW/2 + 10 + plusMinusGap));
+
+        // ── Eje Agotamiento (horizontal, abajo): izquierda = más, derecha = menos ──
+        const agotCenterX = (left+right)/2;
+        const agotY = chartArea.bottom - 8;
+        ctx.font = `700 ${axisFont}px "DM Sans", sans-serif`;
+        const agotLabelW = ctx.measureText('AGOTAMIENTO').width;
+        ctx.font = `700 ${axisFont}px "DM Mono", monospace`;
+        const agotArrowW = ctx.measureText('←').width;
+        const agotTotalW = agotArrowW + 4 + agotLabelW;
+        const agotStartX = agotCenterX - agotTotalW/2;
+        ctx.textAlign = 'left';
+        ctx.fillText('←', agotStartX, agotY);
+        ctx.font = `700 ${axisFont}px "DM Sans", sans-serif`;
+        ctx.fillText('AGOTAMIENTO', agotStartX + agotArrowW + 4, agotY);
+        ctx.textAlign = 'center';
+        ctx.font = `800 ${axisFont+2}px "DM Sans", sans-serif`;
+        ctx.fillText('+', Math.max(left + 14, agotStartX - plusMinusGap), agotY);
+        ctx.fillText('−', Math.min(right - 14, agotStartX + agotTotalW + plusMinusGap), agotY);
         ctx.restore();
       }
     };

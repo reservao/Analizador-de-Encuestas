@@ -5160,7 +5160,7 @@ const RCP_DEFS = [
   {
     id: 'cuadrante_4seg',
     nombre: '4 Segmentos',
-    desc: 'Cuadrante que cruza Alto Engagement y Alto Agotamiento en 4 segmentos: Engagement, Agotados, Comprometidos al límite y Zona gris',
+    desc: 'Cuadrante que cruza Alto Engagement y Alto Agotamiento en 4 segmentos: Engagement, Agotados, Compulsión al límite y Zona gris',
     icono: '◩',
     tipo: 'quadrant',
     requiere: ['WORK_ENGAGEMENT','EXHAUSTION'],
@@ -7593,10 +7593,10 @@ function rcpGenerate() {
         const tileH = (bottom - top - gap) / 2;
 
         const tiles = [
-          { x:left,          y:top,          color:'#F5A452', val:opts.comprometidos, label:'Comprometidos al límite' },
+          { x:left,          y:top,          color:'#F5A452', val:opts.comprometidos, label:'Compulsión al límite' },
           { x:left+tileW+gap,y:top,          color:'#0E8A99', val:opts.engagement,    label:'Engagement' },
           { x:left,          y:top+tileH+gap,color:'#D62E2E', val:opts.agotados,      label:'Agotados' },
-          { x:left+tileW+gap,y:top+tileH+gap,color:'#AEE3DB', val:opts.zonaGris,      label:'Zona gris', dark:true },
+          { x:left+tileW+gap,y:top+tileH+gap,color:'#78828F', val:opts.zonaGris,      label:'Zona gris' },
         ];
         tiles.forEach(t => {
           ctx.fillStyle = t.color;
@@ -7690,7 +7690,7 @@ function rcpGenerate() {
     if (rcpExtraWrap) {
       const summaryText4s =
 `${label4s}
-Comprometidos al límite: N=${q4s.comprometidosN} (${q4s.comprometidos}%)
+Compulsión al límite: N=${q4s.comprometidosN} (${q4s.comprometidos}%)
 Engagement: N=${q4s.engagementN} (${q4s.engagement}%)
 Agotados: N=${q4s.agotadosN} (${q4s.agotados}%)
 Zona gris: N=${q4s.zonaGrisN} (${q4s.zonaGris}%)
@@ -7732,13 +7732,12 @@ Total: N=${q4s.n}`;
       .sort((a,b)=>{ const ia=RD_ORDER_4S.indexOf(a.col), ib=RD_ORDER_4S.indexOf(b.col); return (ia<0?999:ia)-(ib<0?999:ib); });
     const labelsRd4s = dimsRd4s.map(d => d.label);
 
-    // Mismos colores de "4 Segmentos" (el de Zona gris se oscurece un poco: el tile
-    // claro casi no se ve como línea sobre fondo blanco).
+    // Mismos colores que el cuadrante "4 Segmentos".
     const seriesDefs4s = [
-      { label:'Comprometidos al límite', color:'#F0A23E', rows:groupsRd4s.comprometidos },
-      { label:'Engagement',              color:'#0E8A99', rows:groupsRd4s.engagement },
-      { label:'Agotados',                color:'#D62E2E', rows:groupsRd4s.agotados },
-      { label:'Zona gris',               color:'#49A99A', rows:groupsRd4s.zonaGris },
+      { label:'Compulsión al límite', color:'#F0A23E', rows:groupsRd4s.comprometidos },
+      { label:'Engagement',           color:'#0E8A99', rows:groupsRd4s.engagement },
+      { label:'Agotados',             color:'#D62E2E', rows:groupsRd4s.agotados },
+      { label:'Zona gris',            color:'#78828F', rows:groupsRd4s.zonaGris },
     ];
 
     if (!seriesDefs4s.some(s => s.rows.length)) {

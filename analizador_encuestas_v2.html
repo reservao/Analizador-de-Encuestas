@@ -5195,6 +5195,7 @@ const RCP_DEFS = [
       { id:'med',   tipo:'med_single',   label:'Medición a analizar' },
       { id:'seg',   tipo:'seg_col_rd',   label:'Filtrar por clasificación (opcional)' },
       { id:'nmin',  tipo:'nmin',         label:'N mínimo para generar (confidencialidad)' },
+      { id:'altura', tipo:'altura_px',   label:'Alto del gráfico' },
     ]
   },
   {
@@ -5342,6 +5343,23 @@ const RCP_QPREG_FAMILIES = [
 function rcpQPregPalette(nombre) {
   const fam = RCP_QPREG_FAMILIES.find(f => f.dims.includes(nombre));
   return fam || { dim:'#F5A623', item:'#FFE39A', text:'#4A3A14' };
+}
+// Envuelve una etiqueta larga en líneas de máx. `maxLen` caracteres, cortando
+// por palabra completa. Se usa tanto para dibujar los ticks del eje Y como
+// para calcular el alto automático del gráfico "Gráfico por Pregunta" — deben
+// usar la misma lógica de corte para que el alto calculado coincida con lo
+// que realmente se dibuja.
+function rcpPregWrapLabel(lbl, maxLen) {
+  lbl = lbl || '';
+  if (lbl.length <= maxLen) return [lbl];
+  const words = lbl.split(' ');
+  const lines = []; let cur = '';
+  words.forEach(w => {
+    if (cur && (cur+' '+w).length > maxLen) { lines.push(cur); cur = w; }
+    else cur = cur ? cur+' '+w : w;
+  });
+  if (cur) lines.push(cur);
+  return lines;
 }
 function rcpDimMean(rows, dimCol, itemCols) {
   var v = rcpMean(rows, dimCol);
@@ -7906,17 +7924,65 @@ Total: N=${q4s.n}`;
     const labelCtxQ = segVal ? (segCol+': '+segVal) : med;
     const titleQ = (dimQ.nombre + (rcpHideMedLabel ? '' : ' — ' + labelCtxQ));
 
+    // ── Alto automático según filas y líneas de texto envueltas ──────────────
+    // Preguntas largas ocupan varias líneas en el eje Y; si el alto no las
+    // considera, las barras quedan apretadas. Se puede sobreescribir con el
+    // campo "Alto del gráfico" (alturaParam > 0), igual que en eNPS.
+    const WRAP_LEN_Q = 32;
+    const alturaParam = parseInt(rcpGetParam('altura')) || 0;
+    let hAutoQ = 90; // título + paddings
+    rowsQFull.forEach(r => {
+      const nLines = rcpPregWrapLabel(r.label, WRAP_LEN_Q).length;
+      hAutoQ += 38 + Math.max(0, nLines - 1) * 17;
+    });
+    hAutoQ = Math.max(260, hAutoQ);
+    const hQ = alturaParam > 0 ? alturaParam : hAutoQ;
+    const baseHQ = hQ; // referencia para escalar tipografías proporcionalmente
+
+    const canvasElQ = document.getElementById('rcp-canvas');
+    const canvasInnerQ = document.getElementById('rcp-canvas-inner');
+    if (canvasInnerQ) { canvasInnerQ.style.width = '100%'; canvasInnerQ.style.height = hQ+'px'; canvasInnerQ.style.minHeight = hQ+'px'; }
+    if (canvasElQ) { canvasElQ.style.height = hQ+'px'; canvasElQ.style.minHeight = hQ+'px'; }
+    const hSliderQ = document.getElementById('rcp-height-slider');
+    const hLblQ    = document.getElementById('rcp-height-label');
+    if (hSliderQ) hSliderQ.value = hQ;
+    if (hLblQ)    hLblQ.textContent = hQ+'px';
+
+    // Tamaños de fuente base — se reescalan proporcionalmente cada vez que el
+    // gráfico se redimensiona (slider de Alto/Ancho). baseHQ es el alto con el
+    // que se generó (automático o manual); 900 es el ancho por defecto del
+    // slider "Ancho" — referencia estable que no depende de medidas de layout
+    // tomadas antes de que el canvas termine de acomodarse a su contenedor.
+    const FONT_BASE_Q = { title:14, xtick:10, ytick:11, valDim:15, valItem:13 };
+    const BASE_W_Q = 900;
+    function rcpPregFontScale(chart) {
+      const h = chart.height || baseHQ;
+      const w = chart.width  || BASE_W_Q;
+      const scaleH = h / baseHQ;
+      const scaleW = w / BASE_W_Q;
+      return Math.min(1.8, Math.max(0.65, Math.sqrt(scaleH * scaleW)));
+    }
+    function rcpPregApplyFontScale(chart) {
+      const s = rcpPregFontScale(chart);
+      chart.options.plugins.title.font.size = Math.max(9, Math.round(FONT_BASE_Q.title * s));
+      chart.options.scales.x.ticks.font.size = Math.max(8, Math.round(FONT_BASE_Q.xtick * s));
+      chart.options.scales.y.ticks.font.size = Math.max(8, Math.round(FONT_BASE_Q.ytick * s));
+      chart.$pregFontScale = s;
+    }
+
     const qValuePlugin = {
       id: 'qValuePlugin',
       afterDatasetsDraw(chart) {
         const { ctx } = chart;
+        const s = chart.$pregFontScale || rcpPregFontScale(chart);
         const meta = chart.getDatasetMeta(0);
         ctx.save();
         meta.data.forEach((bar, i) => {
           const v = dataQ[i];
           if (v == null) return;
           const isDim = rowsQFull[i].isDim;
-          ctx.font = (isDim ? '800 15px' : '700 13px') + ' "DM Sans", sans-serif';
+          const fSize = Math.max(8, Math.round((isDim ? FONT_BASE_Q.valDim : FONT_BASE_Q.valItem) * s));
+          ctx.font = (isDim ? '800 ' : '700 ') + fSize + 'px "DM Sans", sans-serif';
           ctx.fillStyle = isDim ? '#FFFFFF' : paletteQ.text;
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
@@ -7940,28 +8006,21 @@ Total: N=${q4s.n}`;
         indexAxis: 'y',
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top: 10, bottom: 10, left: 10, right: 44 } },
+        onResize: (chart) => { rcpPregApplyFontScale(chart); chart.update('none'); },
         plugins: {
-          title: { display: !rcpHideTitle, text: titleQ, font:{size:14,weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          title: { display: !rcpHideTitle, text: titleQ, font:{size:FONT_BASE_Q.title,weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
           legend: { display: false },
           tooltip: { callbacks: { label: ctx => ctx.parsed.x!=null ? ctx.parsed.x.toFixed(2) : '—' } },
         },
         scales: {
-          x: { min: scaleMinQ, max: scaleMaxQ, grid:{display:false}, border:{display:false}, ticks:{font:{size:10}} },
+          x: { min: scaleMinQ, max: scaleMaxQ, grid:{display:false}, border:{display:false}, ticks:{font:{size:FONT_BASE_Q.xtick}} },
           y: {
             grid:{display:false}, border:{display:false},
             ticks: {
-              font: { size: 11 },
+              font: { size: FONT_BASE_Q.ytick },
               callback: function(val) {
                 const lbl = this.getLabelForValue(val) || '';
-                if (lbl.length <= 32) return lbl;
-                const words = lbl.split(' ');
-                const lines = []; let cur = '';
-                words.forEach(w => {
-                  if (cur && (cur+' '+w).length > 32) { lines.push(cur); cur = w; }
-                  else cur = cur ? cur+' '+w : w;
-                });
-                if (cur) lines.push(cur);
-                return lines;
+                return rcpPregWrapLabel(lbl, WRAP_LEN_Q);
               }
             }
           }
@@ -7969,6 +8028,7 @@ Total: N=${q4s.n}`;
         animation: { duration: 300 },
       },
       plugins: [qValuePlugin],
+      $onCreate: (chart) => rcpPregApplyFontScale(chart),
     };
     RCP._chartState = null;
     RCP._enpsState = null;
@@ -8200,6 +8260,7 @@ Total: N=${q4s.n}`;
   const rcpCanvasEl = document.getElementById('rcp-canvas');
   if (rcpCanvasEl) rcpCanvasEl.removeEventListener('click', rcpNativeCanvasClick);
   RCP.chart = new Chart(ctx, chartCfg);
+  if (typeof chartCfg.$onCreate === 'function') chartCfg.$onCreate(RCP.chart);
   // Native listener fires for ALL canvas clicks including axis label area
   if (rcpCanvasEl && (RCP._chartState || RCP._enpsState)) {
     rcpCanvasEl.addEventListener('click', rcpNativeCanvasClick);

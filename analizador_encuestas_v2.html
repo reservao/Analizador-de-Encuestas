@@ -1129,6 +1129,7 @@ tr:hover td { background: var(--bg); }
                   <canvas id="rcp-canvas" style="min-height:460px"></canvas>
                 </div>
                 <div id="rcp-table-wrap" style="display:none;width:100%;overflow-x:auto;padding-bottom:12px"></div>
+                <div id="rcp-extra-wrap" style="display:none;width:100%"></div>
               </div>
             </div>
           </div>
@@ -5347,6 +5348,7 @@ function rcpCuadrante4Seg(rows) {
   if (!n) return null;
   return {
     n,
+    comprometidosN: comprometidos, engagementN: engagement, agotadosN: agotados, zonaGrisN: zonaGris,
     comprometidos: +(comprometidos/n*100).toFixed(1),
     engagement:    +(engagement/n*100).toFixed(1),
     agotados:      +(agotados/n*100).toFixed(1),
@@ -6195,7 +6197,9 @@ function rcpGenerate() {
   // Reset table/chart visibility
   const rcpTableWrap = document.getElementById('rcp-table-wrap');
   const rcpCanvasInner = document.getElementById('rcp-canvas-inner');
+  const rcpExtraWrap = document.getElementById('rcp-extra-wrap');
   if(rcpTableWrap){ rcpTableWrap.style.display='none'; rcpTableWrap.innerHTML=''; }
+  if(rcpExtraWrap){ rcpExtraWrap.style.display='none'; rcpExtraWrap.innerHTML=''; }
   if(rcpCanvasInner) rcpCanvasInner.style.display='';
   const ctx = rcpCanvas.getContext('2d');
 
@@ -7657,6 +7661,31 @@ function rcpGenerate() {
     const toolsEl4s = document.getElementById('rcp-enps-tools');
     if(toolsEl4s){ toolsEl4s.style.display='none'; toolsEl4s.innerHTML=''; }
 
+    // Texto plano con el N de cada segmento, aparte de la imagen, para poder
+    // copiarlo y pegarlo directo como texto editable en una diapositiva. Usa un
+    // contenedor propio (rcp-extra-wrap), NO rcp-table-wrap — ese último decide
+    // en rcpDownloadPNG si "Descargar PNG" exporta una tabla en vez del canvas.
+    if (rcpExtraWrap) {
+      const summaryText4s =
+`${label4s}
+Comprometidos al límite: N=${q4s.comprometidosN} (${q4s.comprometidos}%)
+Engagement: N=${q4s.engagementN} (${q4s.engagement}%)
+Agotados: N=${q4s.agotadosN} (${q4s.agotados}%)
+Zona gris: N=${q4s.zonaGrisN} (${q4s.zonaGris}%)
+Total: N=${q4s.n}`;
+      rcpExtraWrap.innerHTML = `
+        <div style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:#f8fafc">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">
+            <span style="font-size:12px;font-weight:600;color:var(--text2)">Texto para copiar (N por segmento)</span>
+            <button class="btn btn-secondary btn-sm" id="rcp-4seg-copy-btn" onclick="rcpCopy4SegText()">📋 Copiar texto</button>
+          </div>
+          <textarea id="rcp-4seg-text" readonly
+            style="width:100%;min-height:104px;font-family:'DM Mono',monospace;font-size:12.5px;line-height:1.5;border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;background:#fff;box-sizing:border-box"
+            onclick="this.select()">${escHtml(summaryText4s)}</textarea>
+        </div>`;
+      rcpExtraWrap.style.display = 'block';
+    }
+
   } else if(def.id==='demograficos') {
     const med = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);
     const medRows = rcpRowsByMed(med);
@@ -7985,6 +8014,22 @@ function rcpCaptureTablePNG(wrap) {
     wrap.style.width    = prevWidth;
     alert('No se pudo exportar la tabla como PNG.');
   });
+}
+
+function rcpCopy4SegText() {
+  const ta = document.getElementById('rcp-4seg-text');
+  const btn = document.getElementById('rcp-4seg-copy-btn');
+  if (!ta) return;
+  const done = ok => { if (btn) { const old = btn.textContent; btn.textContent = ok ? '✓ Copiado' : '✗ No se pudo copiar'; setTimeout(() => { btn.textContent = old; }, 1600); } };
+  const fallback = () => {
+    try { ta.select(); document.execCommand('copy'); done(true); }
+    catch (e) { done(false); }
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(ta.value).then(() => done(true)).catch(fallback);
+  } else {
+    fallback();
+  }
 }
 
 function rcpDownloadPNG() {

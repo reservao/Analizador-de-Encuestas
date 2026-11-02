@@ -7562,16 +7562,9 @@ function rcpGenerate() {
         const top = chartArea.top + padTR;
         const right = chartArea.right - padTR;
         const bottom = chartArea.bottom - padB;
-        const gap = 8;
+        const gap = 10;
         const tileW = (right - left - gap) / 2;
         const tileH = (bottom - top - gap) / 2;
-
-        const bgGrad = ctx.createLinearGradient(left, top, right, bottom);
-        bgGrad.addColorStop(0, '#0B1E33');
-        bgGrad.addColorStop(1, '#154269');
-        ctx.fillStyle = bgGrad;
-        rcp4sRoundRect(ctx, left, top, right-left, bottom-top, 14);
-        ctx.fill();
 
         const tiles = [
           { x:left,          y:top,          color:'#F5A452', val:opts.comprometidos, label:'Comprometidos al límite' },
@@ -7581,7 +7574,7 @@ function rcpGenerate() {
         ];
         tiles.forEach(t => {
           ctx.fillStyle = t.color;
-          rcp4sRoundRect(ctx, t.x+3, t.y+3, tileW-6, tileH-6, 10);
+          rcp4sRoundRect(ctx, t.x, t.y, tileW, tileH, 10);
           ctx.fill();
           const cx = t.x + tileW/2, cy = t.y + tileH/2;
           const valFont = Math.max(26, Math.min(46, tileH*0.42));
@@ -7596,7 +7589,7 @@ function rcpGenerate() {
           lines.forEach((ln,i) => ctx.fillText(ln, cx, cy + 20 + i*(lblFont+3)));
         });
 
-        ctx.fillStyle = '#AEBBCC';
+        ctx.fillStyle = '#5B6B82';
         ctx.font = '700 11px "DM Mono", monospace';
         ctx.textAlign = 'center';
         ctx.save();

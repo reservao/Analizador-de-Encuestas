@@ -5325,20 +5325,21 @@ function rcpMeanItem(rows, code, text) {
   if (v !== null) return v;
   return text ? rcpMean(rows, text) : null;
 }
-// Paleta por familia de dimensión — mismos colores base que DIM_COLORS/
-// DIM_ITEM_TINTS del export de Tablas Excel (ROP), para que "Gráfico por
-// Pregunta" use la identidad de color ya existente en la app en vez de un
-// color genérico. Si se agrega una dimensión nueva a R_DIMS, agregar su
-// nombre a la familia correspondiente aquí también.
+// Paleta por familia de dimensión — mismos colores que el gráfico predeterminado
+// "Recursos y Demandas" (ver RD_COLORS más abajo, en la rama def.id==='recursos_demandas')
+// y RCP_COLORS.engagement/agotamiento, para que "Gráfico por Pregunta" use la
+// identidad de color ya existente en esa familia de gráficos de RCP, no la
+// paleta (distinta) del export de Tablas Excel. Si se agrega una dimensión
+// nueva a R_DIMS, agregar su nombre a la familia correspondiente aquí también.
 const RCP_QPREG_FAMILIES = [
   { dims:['Engagement','Promedio Vigor','Promedio Dedicación','Promedio Absorción'],
-    dim:'#5B9BD5', item:'#DDEBF7', text:'#1F4E78' },
-  { dims:['Agotamiento'], dim:'#ED7D31', item:'#FCE4D6', text:'#9C4B1E' },
+    dim:'#1B3F6E', item:'#DCE3EC', text:'#1B3F6E' },
+  { dims:['Agotamiento'], dim:'#C05A2A', item:'#F5DDD0', text:'#8C3D15' },
   { dims:['Oportunidades de Desarrollo','Coaching del Líder','Retroalimentación','Colaboración','Autonomía'],
-    dim:'#375623', item:'#E2EFDA', text:'#2E4D1D' },
-  { dims:['Optimismo','Autoeficacia'], dim:'#4EA72A', item:'#E2EFDA', text:'#2E4D1D' },
-  { dims:['Presión en el Trabajo','Demandas Cognitivas','Demandas Emocionales','Conflicto de Rol','Trabas en el Trabajo'],
-    dim:'#7030A0', item:'#EAD1F5', text:'#4C2272' },
+    dim:'#2196F3', item:'#D6EAFB', text:'#0D5FA3' },
+  { dims:['Optimismo','Autoeficacia'], dim:'#1B3F6E', item:'#DCE3EC', text:'#1B3F6E' },
+  { dims:['Presión en el Trabajo','Demandas Cognitivas'], dim:'#EF6C00', item:'#FDE4CC', text:'#9A4B00' },
+  { dims:['Demandas Emocionales','Conflicto de Rol','Trabas en el Trabajo'], dim:'#C62828', item:'#F7D7D7', text:'#8E1F1F' },
 ];
 function rcpQPregPalette(nombre) {
   const fam = RCP_QPREG_FAMILIES.find(f => f.dims.includes(nombre));

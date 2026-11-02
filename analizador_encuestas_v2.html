@@ -7576,7 +7576,7 @@ function rcpGenerate() {
         const tiles = [
           { x:left,          y:top,          color:'#F5A452', val:opts.comprometidos, label:'Comprometidos al límite' },
           { x:left+tileW+gap,y:top,          color:'#0E8A99', val:opts.engagement,    label:'Engagement' },
-          { x:left,          y:top+tileH+gap,color:'#E8792A', val:opts.agotados,      label:'Agotados' },
+          { x:left,          y:top+tileH+gap,color:'#D62E2E', val:opts.agotados,      label:'Agotados' },
           { x:left+tileW+gap,y:top+tileH+gap,color:'#AEE3DB', val:opts.zonaGris,      label:'Zona gris', dark:true },
         ];
         tiles.forEach(t => {
@@ -7584,16 +7584,16 @@ function rcpGenerate() {
           rcp4sRoundRect(ctx, t.x+3, t.y+3, tileW-6, tileH-6, 10);
           ctx.fill();
           const cx = t.x + tileW/2, cy = t.y + tileH/2;
-          const valFont = Math.max(16, Math.min(30, tileH*0.28));
+          const valFont = Math.max(26, Math.min(46, tileH*0.42));
           ctx.textAlign = 'center';
           ctx.fillStyle = t.dark ? '#0B1E33' : '#ffffff';
           ctx.font = `800 ${valFont}px "DM Sans", sans-serif`;
           ctx.textBaseline = 'alphabetic';
-          ctx.fillText((t.val!=null ? t.val+'%' : '—'), cx, cy - 2);
-          const lblFont = Math.max(10, Math.min(13, tileH*0.11));
+          ctx.fillText((t.val!=null ? t.val+'%' : '—'), cx, cy - 4);
+          const lblFont = Math.max(11, Math.min(14, tileH*0.12));
           ctx.font = `700 ${lblFont}px "DM Sans", sans-serif`;
           const lines = rcp4sWrapLines(ctx, t.label, tileW-16);
-          lines.forEach((ln,i) => ctx.fillText(ln, cx, cy + 16 + i*(lblFont+3)));
+          lines.forEach((ln,i) => ctx.fillText(ln, cx, cy + 20 + i*(lblFont+3)));
         });
 
         ctx.fillStyle = '#AEBBCC';
@@ -7602,8 +7602,13 @@ function rcpGenerate() {
         ctx.save();
         ctx.translate(chartArea.left + 16, (top+bottom)/2);
         ctx.rotate(-Math.PI/2);
-        ctx.fillText('ENGAGEMENT ↑', 0, 0);
+        ctx.fillText('ENGAGEMENT', 0, 0);
         ctx.restore();
+        // La flecha va sin rotar (si se dibuja junto al texto rotado, el glifo "↑"
+        // termina apuntando hacia la izquierda en vez de hacia arriba).
+        ctx.font = '700 13px "DM Mono", monospace';
+        ctx.fillText('↑', chartArea.left + 16, top + 14);
+        ctx.font = '700 11px "DM Mono", monospace';
         ctx.fillText('← AGOTAMIENTO', (left+right)/2, chartArea.bottom - 8);
         ctx.restore();
       }

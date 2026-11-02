@@ -5157,6 +5157,19 @@ const RCP_DEFS = [
     ]
   },
   {
+    id: 'cuadrante_4seg',
+    nombre: '4 Segmentos',
+    desc: 'Cuadrante que cruza Alto Engagement y Alto Agotamiento en 4 segmentos: Engagement, Agotados, Comprometidos al límite y Zona gris',
+    icono: '◩',
+    tipo: 'quadrant',
+    requiere: ['WORK_ENGAGEMENT','EXHAUSTION'],
+    params: [
+      { id:'med',   tipo:'med_single',   label:'Medición a analizar' },
+      { id:'seg',   tipo:'seg_col_rd',   label:'Filtrar por clasificación (opcional)' },
+      { id:'nmin',  tipo:'nmin',         label:'N mínimo para generar (confidencialidad)' },
+    ]
+  },
+  {
     id: 'demograficos',
     nombre: 'Resultados Demográficos',
     desc: 'Tabla resumen de dimensiones JDR por Género, Antigüedad y Generación',
@@ -5287,6 +5300,58 @@ function rcpRowsByMed(med) {
   const idx = rcpColIdx(RCP.medCol);
   if (idx < 0) return RCP.rows;
   return RCP.rows.filter(r=>String(r[idx] ?? '').trim()===med);
+}
+
+// Clasifica cada persona en uno de los 4 cuadrantes Alto Engagement × Alto Agotamiento
+// (usado por el gráfico "4 Segmentos"). Prioriza columnas binarias pre-calculadas
+// (ALTO_ENGAGEMENT / EXHAUSTED_BYNARY / ALTO_AGOTAMIENTO); si no existen, calcula
+// per-persona con el mismo criterio que el resto de la app: Vigor+Dedicación+Absorción
+// ≥5 simultáneamente para Alto Engagement, promedio EX1-EX4 ≥3.25 para Alto Agotamiento.
+function rcpCuadrante4Seg(rows) {
+  const engBinIdx = rcpColIdxFuzzy('ALTO_ENGAGEMENT');
+  const agoBinIdx = (() => { const i = rcpColIdxFuzzy('EXHAUSTED_BYNARY'); return i >= 0 ? i : rcpColIdxFuzzy('ALTO_AGOTAMIENTO'); })();
+  const weGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
+  const weIdxs = weGroups.map(g => g.map(c => rcpItemIdx(c)).filter(i => i >= 0));
+  const hasWEFallback = weIdxs.every(g => g.length);
+  const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
+  const hasEXFallback = exIdxs.length > 0;
+
+  let n = 0, comprometidos = 0, engagement = 0, agotados = 0, zonaGris = 0;
+  for (const row of rows) {
+    let engFlag = null, agoFlag = null;
+    if (engBinIdx >= 0) {
+      const v = parseFloat(row[engBinIdx]);
+      if (!isNaN(v)) engFlag = v === 1 ? 1 : 0;
+    }
+    if (engFlag === null && hasWEFallback) {
+      engFlag = weIdxs.every(idxs => {
+        const vs = idxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
+        return vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 5;
+      }) ? 1 : 0;
+    }
+    if (agoBinIdx >= 0) {
+      const v = parseFloat(row[agoBinIdx]);
+      if (!isNaN(v)) agoFlag = v === 1 ? 1 : 0;
+    }
+    if (agoFlag === null && hasEXFallback) {
+      const vs = exIdxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
+      agoFlag = (vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 3.25) ? 1 : 0;
+    }
+    if (engFlag === null || agoFlag === null) continue;
+    n++;
+    if (engFlag && agoFlag) comprometidos++;
+    else if (engFlag && !agoFlag) engagement++;
+    else if (!engFlag && agoFlag) agotados++;
+    else zonaGris++;
+  }
+  if (!n) return null;
+  return {
+    n,
+    comprometidos: +(comprometidos/n*100).toFixed(1),
+    engagement:    +(engagement/n*100).toFixed(1),
+    agotados:      +(agotados/n*100).toFixed(1),
+    zonaGris:      +(zonaGris/n*100).toFixed(1),
+  };
 }
 
 function rcpProcess(wb, filename) {
@@ -7438,6 +7503,133 @@ function rcpGenerate() {
 
     const toolsElOC = document.getElementById('rcp-enps-tools');
     if(toolsElOC) { toolsElOC.style.display='none'; toolsElOC.innerHTML=''; }
+
+  } else if(def.id==='cuadrante_4seg') {
+    const med    = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);
+    const segCol = rcpGetParam('seg') || '';
+    const segVal = rcpGetParam('seg_val') || '';
+
+    let rows4s = rcpRowsByMed(med);
+    if (segCol && segVal) {
+      const sIdx = RCP.headers.indexOf(segCol);
+      if (sIdx >= 0) rows4s = rows4s.filter(r => String(r[sIdx]||'').trim() === segVal);
+    }
+
+    const nmin4s = parseInt(rcpGetParam('nmin')) || 0;
+    if (nmin4s > 0 && rows4s.length < nmin4s) {
+      alert(`Confidencial: la selección tiene N=${rows4s.length}, bajo el mínimo definido (${nmin4s}). Ajusta el filtro o el N mínimo.`);
+      return;
+    }
+
+    const q4s = rcpCuadrante4Seg(rows4s);
+    if (!q4s) { alert('No se encontraron suficientes datos de Engagement/Agotamiento para calcular los 4 segmentos.'); return; }
+
+    const label4s = segVal ? (segCol+': '+segVal) : med;
+    const title4s = rcpHideMedLabel ? def.nombre : (def.nombre + ' — ' + label4s);
+
+    // Dibuja el cuadrante completo (fondo navy, 4 tiles, ejes) directamente sobre el
+    // canvas — no usa barras/datasets de Chart.js, solo lo aprovecha como lienzo
+    // exportable (reutiliza el mismo PNG/zoom/ancho que el resto de los gráficos).
+    function rcp4sRoundRect(c, x, y, w, h, r) {
+      c.beginPath();
+      c.moveTo(x+r, y);
+      c.lineTo(x+w-r, y); c.quadraticCurveTo(x+w, y, x+w, y+r);
+      c.lineTo(x+w, y+h-r); c.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+      c.lineTo(x+r, y+h); c.quadraticCurveTo(x, y+h, x, y+h-r);
+      c.lineTo(x, y+r); c.quadraticCurveTo(x, y, x+r, y);
+      c.closePath();
+    }
+    function rcp4sWrapLines(c, text, maxW) {
+      const words = text.split(' ');
+      const lines = []; let cur = '';
+      for (const w2 of words) {
+        const next = cur ? cur+' '+w2 : w2;
+        if (c.measureText(next).width > maxW && cur) { lines.push(cur); cur = w2; }
+        else cur = next;
+      }
+      if (cur) lines.push(cur);
+      return lines;
+    }
+    const rcpQuadrantPlugin = {
+      id: 'rcpQuadrant',
+      afterDraw(chart) {
+        const { ctx, chartArea } = chart;
+        const opts = chart.options.plugins.rcpQuadrant;
+        if (!opts) return;
+        ctx.save();
+        const padL = 42, padB = 32, padTR = 8;
+        const left = chartArea.left + padL;
+        const top = chartArea.top + padTR;
+        const right = chartArea.right - padTR;
+        const bottom = chartArea.bottom - padB;
+        const gap = 8;
+        const tileW = (right - left - gap) / 2;
+        const tileH = (bottom - top - gap) / 2;
+
+        const bgGrad = ctx.createLinearGradient(left, top, right, bottom);
+        bgGrad.addColorStop(0, '#0B1E33');
+        bgGrad.addColorStop(1, '#154269');
+        ctx.fillStyle = bgGrad;
+        rcp4sRoundRect(ctx, left, top, right-left, bottom-top, 14);
+        ctx.fill();
+
+        const tiles = [
+          { x:left,          y:top,          color:'#F5A452', val:opts.comprometidos, label:'Comprometidos al límite' },
+          { x:left+tileW+gap,y:top,          color:'#0E8A99', val:opts.engagement,    label:'Engagement' },
+          { x:left,          y:top+tileH+gap,color:'#E8792A', val:opts.agotados,      label:'Agotados' },
+          { x:left+tileW+gap,y:top+tileH+gap,color:'#AEE3DB', val:opts.zonaGris,      label:'Zona gris', dark:true },
+        ];
+        tiles.forEach(t => {
+          ctx.fillStyle = t.color;
+          rcp4sRoundRect(ctx, t.x+3, t.y+3, tileW-6, tileH-6, 10);
+          ctx.fill();
+          const cx = t.x + tileW/2, cy = t.y + tileH/2;
+          const valFont = Math.max(16, Math.min(30, tileH*0.28));
+          ctx.textAlign = 'center';
+          ctx.fillStyle = t.dark ? '#0B1E33' : '#ffffff';
+          ctx.font = `800 ${valFont}px "DM Sans", sans-serif`;
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText((t.val!=null ? t.val+'%' : '—'), cx, cy - 2);
+          const lblFont = Math.max(10, Math.min(13, tileH*0.11));
+          ctx.font = `700 ${lblFont}px "DM Sans", sans-serif`;
+          const lines = rcp4sWrapLines(ctx, t.label, tileW-16);
+          lines.forEach((ln,i) => ctx.fillText(ln, cx, cy + 16 + i*(lblFont+3)));
+        });
+
+        ctx.fillStyle = '#AEBBCC';
+        ctx.font = '700 11px "DM Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.save();
+        ctx.translate(chartArea.left + 16, (top+bottom)/2);
+        ctx.rotate(-Math.PI/2);
+        ctx.fillText('ENGAGEMENT ↑', 0, 0);
+        ctx.restore();
+        ctx.fillText('← AGOTAMIENTO', (left+right)/2, chartArea.bottom - 8);
+        ctx.restore();
+      }
+    };
+
+    chartCfg = {
+      type: 'bar',
+      data: { labels: [''], datasets: [{ data: [0], backgroundColor: 'rgba(0,0,0,0)' }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 6, bottom: 6, left: 6, right: 6 } },
+        plugins: {
+          title: { display: !rcpHideTitle, text: title4s, font:{size:14,weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { display: false },
+          tooltip: { enabled: false },
+          rcpQuadrant: { ...q4s },
+        },
+        scales: { x:{display:false}, y:{display:false} },
+        animation: { duration: 0 },
+      },
+      plugins: [rcpQuadrantPlugin]
+    };
+    RCP._chartState = null;
+    RCP._enpsState = null;
+    const toolsEl4s = document.getElementById('rcp-enps-tools');
+    if(toolsEl4s){ toolsEl4s.style.display='none'; toolsEl4s.innerHTML=''; }
 
   } else if(def.id==='demograficos') {
     const med = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);

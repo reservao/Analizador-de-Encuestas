@@ -5184,6 +5184,20 @@ const RCP_DEFS = [
     ]
   },
   {
+    id: 'grafico_por_pregunta',
+    nombre: 'Gráfico por Pregunta',
+    desc: 'Barras horizontales: el puntaje de una dimensión (palanca) y debajo el de cada una de sus preguntas',
+    icono: '📋',
+    tipo: 'bar_h',
+    requiere: [],
+    params: [
+      { id:'dim',   tipo:'dim_select',   label:'Dimensión / palanca' },
+      { id:'med',   tipo:'med_single',   label:'Medición a analizar' },
+      { id:'seg',   tipo:'seg_col_rd',   label:'Filtrar por clasificación (opcional)' },
+      { id:'nmin',  tipo:'nmin',         label:'N mínimo para generar (confidencialidad)' },
+    ]
+  },
+  {
     id: 'demograficos',
     nombre: 'Resultados Demográficos',
     desc: 'Tabla resumen de dimensiones JDR por Género, Antigüedad y Generación',
@@ -5301,6 +5315,14 @@ function rcpMean(rows, col) {
   if (idx<0) return null;
   const vals = rows.map(r=>parseFloat(r[idx])).filter(v=>!isNaN(v));
   return vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : null;
+}
+// Promedio de un ítem por código; si el archivo trae el texto literal de la pregunta
+// como encabezado en vez del código corto, reintenta con ese texto (igual que
+// rMeanItem en Tablas Excel — ver CLAUDE.md, patrón 3).
+function rcpMeanItem(rows, code, text) {
+  const v = rcpMean(rows, code);
+  if (v !== null) return v;
+  return text ? rcpMean(rows, text) : null;
 }
 function rcpDimMean(rows, dimCol, itemCols) {
   var v = rcpMean(rows, dimCol);
@@ -5676,6 +5698,10 @@ function renderRcpParams() {
           </div>
         </div>
       </div>`;
+    } else if(p.tipo==='dim_select') {
+      // Catálogo R_DIMS (el más confiable para preguntas individuales — ver CLAUDE.md)
+      const dimOpts = R_DIMS.map(d => `<option value="${escHtml(d.nombre)}">${escHtml(d.nombre)}</option>`).join('');
+      html += `<select id="rcp_${p.id}" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">${dimOpts}</select>`;
     }
     html += '</div>';
   }
@@ -7792,6 +7818,139 @@ Total: N=${q4s.n}`;
     RCP._enpsState = null;
     const toolsElRd4s = document.getElementById('rcp-enps-tools');
     if (toolsElRd4s) { toolsElRd4s.style.display='none'; toolsElRd4s.innerHTML=''; }
+
+  } else if(def.id==='grafico_por_pregunta') {
+    const dimName = rcpGetParam('dim') || '';
+    const med     = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);
+    const segCol  = rcpGetParam('seg') || '';
+    const segVal  = rcpGetParam('seg_val') || '';
+
+    const dimQ = R_DIMS.find(d => d.nombre === dimName);
+    if (!dimQ) { alert('Selecciona una dimensión.'); return; }
+
+    let rowsQ = rcpRowsByMed(med);
+    if (segCol && segVal) {
+      const sIdx = RCP.headers.indexOf(segCol);
+      if (sIdx >= 0) rowsQ = rowsQ.filter(r => String(r[sIdx]||'').trim() === segVal);
+    }
+
+    const nminQ = parseInt(rcpGetParam('nmin')) || 0;
+    if (nminQ > 0 && rowsQ.length < nminQ) {
+      alert(`Confidencial: la selección tiene N=${rowsQ.length}, bajo el mínimo definido (${nminQ}). Ajusta el filtro o el N mínimo.`);
+      return;
+    }
+
+    // Promedio de la dimensión: columna pre-calculada primero; si no, promedio de
+    // sub-dimensiones (Engagement); si no, promedio de todos sus ítems — mismo orden
+    // de prioridad que Tablas Excel (rDimMean).
+    const allItemsQ = (dimQ.items || []).concat((dimQ.sub || []).flatMap(s => s.items));
+    let dimAvgQ = null;
+    for (const c of dimQ.cols) { const v = rcpMean(rowsQ, c); if (v !== null) { dimAvgQ = v; break; } }
+    if (dimAvgQ === null && dimQ.sub && dimQ.sub.length) {
+      const subVals = dimQ.sub.map(s => {
+        for (const c of s.cols) { const v = rcpMean(rowsQ, c); if (v !== null) return v; }
+        const itemVals = s.items.map(([qc,ql]) => rcpMeanItem(rowsQ, qc, ql)).filter(v => v !== null);
+        return itemVals.length ? +(itemVals.reduce((a,b)=>a+b,0)/itemVals.length).toFixed(2) : null;
+      }).filter(v => v !== null);
+      if (subVals.length === dimQ.sub.length) dimAvgQ = +(subVals.reduce((a,b)=>a+b,0)/subVals.length).toFixed(2);
+    }
+    if (dimAvgQ === null && allItemsQ.length) {
+      const itemVals = allItemsQ.map(([qc,ql]) => rcpMeanItem(rowsQ, qc, ql)).filter(v => v !== null);
+      if (itemVals.length) dimAvgQ = +(itemVals.reduce((a,b)=>a+b,0)/itemVals.length).toFixed(2);
+    }
+
+    const itemRowsQ = allItemsQ
+      .map(([qc,ql]) => ({ label: ql, value: rcpMeanItem(rowsQ, qc, ql) }))
+      .filter(r => r.value !== null);
+
+    if (dimAvgQ === null && !itemRowsQ.length) {
+      alert(`No se encontraron datos para "${dimQ.nombre}" en la selección actual.`);
+      return;
+    }
+
+    // La dimensión va primero (arriba, destacada); las preguntas debajo, en su orden
+    // original — Chart.js dibuja un bar horizontal con el primer elemento del arreglo
+    // arriba, así que no hace falta invertir nada.
+    const rowsQFull = [{ label: dimQ.nombre, value: dimAvgQ, isDim: true }, ...itemRowsQ];
+    const labelsQ = rowsQFull.map(r => r.label);
+    const dataQ   = rowsQFull.map(r => r.value);
+    const colorsQ = rowsQFull.map(r => r.isDim ? '#F5A623' : '#FFE39A');
+
+    // Escala: Engagement 0-6, Agotamiento 1-4, resto (Recursos/Demandas) 1-5
+    const scaleMinQ = dimQ.nombre === 'Engagement' ? 0 : 1;
+    const scaleMaxQ = dimQ.nombre === 'Engagement' ? 6 : (dimQ.nombre === 'Agotamiento' ? 4 : 5);
+
+    const labelCtxQ = segVal ? (segCol+': '+segVal) : med;
+    const titleQ = (dimQ.nombre + (rcpHideMedLabel ? '' : ' — ' + labelCtxQ));
+
+    const qValuePlugin = {
+      id: 'qValuePlugin',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const meta = chart.getDatasetMeta(0);
+        ctx.save();
+        meta.data.forEach((bar, i) => {
+          const v = dataQ[i];
+          if (v == null) return;
+          const isDim = rowsQFull[i].isDim;
+          ctx.font = (isDim ? '800 15px' : '700 13px') + ' "DM Sans", sans-serif';
+          ctx.fillStyle = '#4A3A14';
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(v.toFixed(2).replace('.',','), bar.x - 12, bar.y);
+        });
+        ctx.restore();
+      }
+    };
+
+    chartCfg = {
+      type: 'bar',
+      data: {
+        labels: labelsQ,
+        datasets: [{
+          data: dataQ, backgroundColor: colorsQ,
+          borderRadius: {topLeft:0,topRight:6,bottomLeft:0,bottomRight:6}, borderSkipped: false,
+          barPercentage: 0.7, categoryPercentage: 0.8,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 10, bottom: 10, left: 10, right: 44 } },
+        plugins: {
+          title: { display: !rcpHideTitle, text: titleQ, font:{size:14,weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ctx.parsed.x!=null ? ctx.parsed.x.toFixed(2) : '—' } },
+        },
+        scales: {
+          x: { min: scaleMinQ, max: scaleMaxQ, grid:{display:false}, border:{display:false}, ticks:{font:{size:10}} },
+          y: {
+            grid:{display:false}, border:{display:false},
+            ticks: {
+              font: { size: 11 },
+              callback: function(val) {
+                const lbl = this.getLabelForValue(val) || '';
+                if (lbl.length <= 32) return lbl;
+                const words = lbl.split(' ');
+                const lines = []; let cur = '';
+                words.forEach(w => {
+                  if (cur && (cur+' '+w).length > 32) { lines.push(cur); cur = w; }
+                  else cur = cur ? cur+' '+w : w;
+                });
+                if (cur) lines.push(cur);
+                return lines;
+              }
+            }
+          }
+        },
+        animation: { duration: 300 },
+      },
+      plugins: [qValuePlugin],
+    };
+    RCP._chartState = null;
+    RCP._enpsState = null;
+    const toolsElQ = document.getElementById('rcp-enps-tools');
+    if (toolsElQ) { toolsElQ.style.display='none'; toolsElQ.innerHTML=''; }
 
   } else if(def.id==='demograficos') {
     const med = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);

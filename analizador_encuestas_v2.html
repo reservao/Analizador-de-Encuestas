@@ -5324,6 +5324,25 @@ function rcpMeanItem(rows, code, text) {
   if (v !== null) return v;
   return text ? rcpMean(rows, text) : null;
 }
+// Paleta por familia de dimensión — mismos colores base que DIM_COLORS/
+// DIM_ITEM_TINTS del export de Tablas Excel (ROP), para que "Gráfico por
+// Pregunta" use la identidad de color ya existente en la app en vez de un
+// color genérico. Si se agrega una dimensión nueva a R_DIMS, agregar su
+// nombre a la familia correspondiente aquí también.
+const RCP_QPREG_FAMILIES = [
+  { dims:['Engagement','Promedio Vigor','Promedio Dedicación','Promedio Absorción'],
+    dim:'#5B9BD5', item:'#DDEBF7', text:'#1F4E78' },
+  { dims:['Agotamiento'], dim:'#ED7D31', item:'#FCE4D6', text:'#9C4B1E' },
+  { dims:['Oportunidades de Desarrollo','Coaching del Líder','Retroalimentación','Colaboración','Autonomía'],
+    dim:'#375623', item:'#E2EFDA', text:'#2E4D1D' },
+  { dims:['Optimismo','Autoeficacia'], dim:'#4EA72A', item:'#E2EFDA', text:'#2E4D1D' },
+  { dims:['Presión en el Trabajo','Demandas Cognitivas','Demandas Emocionales','Conflicto de Rol','Trabas en el Trabajo'],
+    dim:'#7030A0', item:'#EAD1F5', text:'#4C2272' },
+];
+function rcpQPregPalette(nombre) {
+  const fam = RCP_QPREG_FAMILIES.find(f => f.dims.includes(nombre));
+  return fam || { dim:'#F5A623', item:'#FFE39A', text:'#4A3A14' };
+}
 function rcpDimMean(rows, dimCol, itemCols) {
   var v = rcpMean(rows, dimCol);
   if(v !== null) return v;
@@ -7874,7 +7893,11 @@ Total: N=${q4s.n}`;
     const rowsQFull = [{ label: dimQ.nombre, value: dimAvgQ, isDim: true }, ...itemRowsQ];
     const labelsQ = rowsQFull.map(r => r.label);
     const dataQ   = rowsQFull.map(r => r.value);
-    const colorsQ = rowsQFull.map(r => r.isDim ? '#F5A623' : '#FFE39A');
+    // Misma paleta por familia de dimensión usada en el resto de la app (ver
+    // DIM_COLORS/DIM_ITEM_TINTS del export de Tablas Excel) — las preguntas usan
+    // el tinte claro de su propia familia, no un color genérico.
+    const paletteQ = rcpQPregPalette(dimQ.nombre);
+    const colorsQ = rowsQFull.map(r => r.isDim ? paletteQ.dim : paletteQ.item);
 
     // Escala: Engagement 0-6, Agotamiento 1-4, resto (Recursos/Demandas) 1-5
     const scaleMinQ = dimQ.nombre === 'Engagement' ? 0 : 1;
@@ -7894,7 +7917,7 @@ Total: N=${q4s.n}`;
           if (v == null) return;
           const isDim = rowsQFull[i].isDim;
           ctx.font = (isDim ? '800 15px' : '700 13px') + ' "DM Sans", sans-serif';
-          ctx.fillStyle = '#4A3A14';
+          ctx.fillStyle = isDim ? '#FFFFFF' : paletteQ.text;
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
           ctx.fillText(v.toFixed(2).replace('.',','), bar.x - 12, bar.y);

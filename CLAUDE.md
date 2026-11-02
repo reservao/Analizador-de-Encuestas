@@ -42,7 +42,7 @@ Dentro de Sección 3 (`rGoSub`, línea 4231), tres sub-tabs adicionales:
 | sub-tab | div | Módulo | Qué hace |
 |---------|-----|--------|----------|
 | "📊 Tablas Excel" | `r-sub-tables` (~984) | **R** | Genera tablas resumen por dimensión/clasificación exportables a Excel |
-| "📈 Gráficos" | `r-sub-charts` (~1057) | **RC** (gráficos libres) + **RCP** (gráficos predeterminados, dentro del mismo div) | RC = constructor de gráficos a medida. RCP = 8 gráficos predefinidos (Niveles de Engagement/Agotamiento, Histórico, Recursos y Demandas, Ranking Criticidad, Óptimo vs Crítico, 4 Segmentos, eNPS, Demográficos) |
+| "📈 Gráficos" | `r-sub-charts` (~1057) | **RC** (gráficos libres) + **RCP** (gráficos predeterminados, dentro del mismo div) | RC = constructor de gráficos a medida. RCP = 9 gráficos predefinidos (Niveles de Engagement/Agotamiento, Histórico, Recursos y Demandas, Ranking Criticidad, Óptimo vs Crítico, 4 Segmentos, 4 Segmentos — Recursos y Demandas, eNPS, Demográficos) |
 | "📄 One Page" | `r-sub-onepage` (~1265) | **ROP** | Reporte de una lámina (Engagement + Agotamiento + Recursos y Demandas + eNPS) por segmento, exportable a PNG o en lote a PPT |
 
 **Importante para pruebas headless**: si vas a invocar funciones de un módulo
@@ -122,16 +122,26 @@ casi siempre hay que replicarlo/arreglarlo en varios módulos a la vez (ver
   `R_DIMS` es el más confiable para agrupaciones de sub-dimensión.
 - `RCP_COL_ALIASES` (dentro de sección RCP) — alias de nombres de columna por
   plataforma/idioma para el módulo RCP específicamente.
-- `RCP_DEFS` — array con la definición de los 8 gráficos predeterminados
+- `RCP_DEFS` — array con la definición de los 9 gráficos predeterminados
   (id, nombre, parámetros configurables). `cuadrante_4seg` ("4 Segmentos")
   es el único que no dibuja barras/líneas con Chart.js: usa un plugin
   (`rcpQuadrantPlugin`, definido inline dentro de su rama en `rcpGenerate`)
-  que pinta directamente en el canvas (fondo navy + 4 tiles + ejes), sobre
-  un chart con datos vacíos — así reutiliza gratis el export a PNG, el
-  control de ancho y el resto de la infraestructura de RCP. La
-  clasificación por persona vive en `rcpCuadrante4Seg()`, junto a
-  `rcpRowsByMed` (usa las mismas reglas de Alto Engagement/Agotamiento que
-  el resto de la app).
+  que pinta directamente en el canvas (fondo transparente + 4 tiles + ejes
+  con +/-), sobre un chart con datos vacíos — así reutiliza gratis el
+  export a PNG, el control de ancho y el resto de la infraestructura de
+  RCP. La clasificación por persona vive en `rcpCuadrante4SegGroups()`
+  (devuelve las filas de cada cuadrante — usa las mismas reglas de Alto
+  Engagement/Agotamiento que el resto de la app); `rcpCuadrante4Seg()` es
+  un wrapper que arma el resumen de N/% sobre esos grupos.
+  `cuadrante_4seg_rd` ("4 Segmentos — Recursos y Demandas") es un gráfico
+  de líneas normal (sí usa Chart.js con datos reales) que reutiliza
+  `rcpCuadrante4SegGroups()` para calcular, por cada uno de los 4
+  cuadrantes, el promedio de las 12 palancas de Recursos y Demandas — una
+  línea por cuadrante. El bloque de texto copiable con el N por segmento
+  (debajo de "4 Segmentos") vive en `#rcp-extra-wrap`, NO en
+  `#rcp-table-wrap` — ese último decide en `rcpDownloadPNG()` si el botón
+  "Descargar PNG" exporta una tabla en vez del canvas, así que reusarlo
+  para contenido no tabular rompe la exportación.
 
 ## Patrones y trampas ya encontradas (para no repetir el diagnóstico)
 

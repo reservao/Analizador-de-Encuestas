@@ -5171,6 +5171,19 @@ const RCP_DEFS = [
     ]
   },
   {
+    id: 'cuadrante_4seg_rd',
+    nombre: '4 Segmentos — Recursos y Demandas',
+    desc: 'Líneas con el promedio de cada palanca de Recursos y Demandas, una línea por cada uno de los 4 segmentos del cuadrante Engagement × Agotamiento',
+    icono: '📉',
+    tipo: 'line',
+    requiere: ['WORK_ENGAGEMENT','EXHAUSTION','SELF_EFFICACY'],
+    params: [
+      { id:'med',   tipo:'med_single',   label:'Medición a analizar' },
+      { id:'seg',   tipo:'seg_col_rd',   label:'Filtrar por clasificación (opcional)' },
+      { id:'nmin',  tipo:'nmin',         label:'N mínimo por segmento para mostrar su línea' },
+    ]
+  },
+  {
     id: 'demograficos',
     nombre: 'Resultados Demográficos',
     desc: 'Tabla resumen de dimensiones JDR por Género, Antigüedad y Generación',
@@ -5304,11 +5317,13 @@ function rcpRowsByMed(med) {
 }
 
 // Clasifica cada persona en uno de los 4 cuadrantes Alto Engagement × Alto Agotamiento
-// (usado por el gráfico "4 Segmentos"). Prioriza columnas binarias pre-calculadas
-// (ALTO_ENGAGEMENT / EXHAUSTED_BYNARY / ALTO_AGOTAMIENTO); si no existen, calcula
-// per-persona con el mismo criterio que el resto de la app: Vigor+Dedicación+Absorción
-// ≥5 simultáneamente para Alto Engagement, promedio EX1-EX4 ≥3.25 para Alto Agotamiento.
-function rcpCuadrante4Seg(rows) {
+// (usado por los gráficos "4 Segmentos" y "4 Segmentos — Recursos y Demandas").
+// Prioriza columnas binarias pre-calculadas (ALTO_ENGAGEMENT / EXHAUSTED_BYNARY /
+// ALTO_AGOTAMIENTO); si no existen, calcula per-persona con el mismo criterio que el
+// resto de la app: Vigor+Dedicación+Absorción ≥5 simultáneamente para Alto Engagement,
+// promedio EX1-EX4 ≥3.25 para Alto Agotamiento. Devuelve las FILAS de cada cuadrante
+// (no solo el conteo), para poder calcular cualquier otro promedio sobre cada grupo.
+function rcpCuadrante4SegGroups(rows) {
   const engBinIdx = rcpColIdxFuzzy('ALTO_ENGAGEMENT');
   const agoBinIdx = (() => { const i = rcpColIdxFuzzy('EXHAUSTED_BYNARY'); return i >= 0 ? i : rcpColIdxFuzzy('ALTO_AGOTAMIENTO'); })();
   const weGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
@@ -5317,7 +5332,7 @@ function rcpCuadrante4Seg(rows) {
   const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
   const hasEXFallback = exIdxs.length > 0;
 
-  let n = 0, comprometidos = 0, engagement = 0, agotados = 0, zonaGris = 0;
+  const groups = { comprometidos: [], engagement: [], agotados: [], zonaGris: [] };
   for (const row of rows) {
     let engFlag = null, agoFlag = null;
     if (engBinIdx >= 0) {
@@ -5339,20 +5354,27 @@ function rcpCuadrante4Seg(rows) {
       agoFlag = (vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 3.25) ? 1 : 0;
     }
     if (engFlag === null || agoFlag === null) continue;
-    n++;
-    if (engFlag && agoFlag) comprometidos++;
-    else if (engFlag && !agoFlag) engagement++;
-    else if (!engFlag && agoFlag) agotados++;
-    else zonaGris++;
+    if (engFlag && agoFlag) groups.comprometidos.push(row);
+    else if (engFlag && !agoFlag) groups.engagement.push(row);
+    else if (!engFlag && agoFlag) groups.agotados.push(row);
+    else groups.zonaGris.push(row);
   }
+  return groups;
+}
+
+// Resumen agregado (N y %) de los 4 cuadrantes — usado por el gráfico "4 Segmentos".
+function rcpCuadrante4Seg(rows) {
+  const g = rcpCuadrante4SegGroups(rows);
+  const n = g.comprometidos.length + g.engagement.length + g.agotados.length + g.zonaGris.length;
   if (!n) return null;
   return {
     n,
-    comprometidosN: comprometidos, engagementN: engagement, agotadosN: agotados, zonaGrisN: zonaGris,
-    comprometidos: +(comprometidos/n*100).toFixed(1),
-    engagement:    +(engagement/n*100).toFixed(1),
-    agotados:      +(agotados/n*100).toFixed(1),
-    zonaGris:      +(zonaGris/n*100).toFixed(1),
+    comprometidosN: g.comprometidos.length, engagementN: g.engagement.length,
+    agotadosN: g.agotados.length, zonaGrisN: g.zonaGris.length,
+    comprometidos: +(g.comprometidos.length/n*100).toFixed(1),
+    engagement:    +(g.engagement.length/n*100).toFixed(1),
+    agotados:      +(g.agotados.length/n*100).toFixed(1),
+    zonaGris:      +(g.zonaGris.length/n*100).toFixed(1),
   };
 }
 
@@ -7685,6 +7707,92 @@ Total: N=${q4s.n}`;
         </div>`;
       rcpExtraWrap.style.display = 'block';
     }
+
+  } else if(def.id==='cuadrante_4seg_rd') {
+    const med    = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);
+    const segCol = rcpGetParam('seg') || '';
+    const segVal = rcpGetParam('seg_val') || '';
+
+    let rowsRd4s = rcpRowsByMed(med);
+    if (segCol && segVal) {
+      const sIdx = RCP.headers.indexOf(segCol);
+      if (sIdx >= 0) rowsRd4s = rowsRd4s.filter(r => String(r[sIdx]||'').trim() === segVal);
+    }
+
+    const groupsRd4s = rcpCuadrante4SegGroups(rowsRd4s);
+    const nminRd4s = parseInt(rcpGetParam('nmin')) || 0;
+
+    // Mismo orden de dimensiones que el gráfico "Recursos y Demandas"
+    const RD_ORDER_4S = [
+      'OPPORTUNITIES_FOR_DEVELOPMENT','COACH','FEEDBACK','SOCIAL_SUPPORT','AUTONOMY',
+      'OPTIMISM','SELF_EFFICACY',
+      'WORK_PRESSURE','COGNITIVE_DEMANDS','EMOTIONAL_DEMANDS','ROLE_CONFLICT','HASSLES'
+    ];
+    const dimsRd4s = ALL_DIMS.filter(d => d.tipo==='recurso' || d.tipo==='demanda')
+      .sort((a,b)=>{ const ia=RD_ORDER_4S.indexOf(a.col), ib=RD_ORDER_4S.indexOf(b.col); return (ia<0?999:ia)-(ib<0?999:ib); });
+    const labelsRd4s = dimsRd4s.map(d => d.label);
+
+    // Mismos colores de "4 Segmentos" (el de Zona gris se oscurece un poco: el tile
+    // claro casi no se ve como línea sobre fondo blanco).
+    const seriesDefs4s = [
+      { label:'Comprometidos al límite', color:'#F0A23E', rows:groupsRd4s.comprometidos },
+      { label:'Engagement',              color:'#0E8A99', rows:groupsRd4s.engagement },
+      { label:'Agotados',                color:'#D62E2E', rows:groupsRd4s.agotados },
+      { label:'Zona gris',               color:'#49A99A', rows:groupsRd4s.zonaGris },
+    ];
+
+    if (!seriesDefs4s.some(s => s.rows.length)) {
+      alert('No se encontraron suficientes datos de Engagement/Agotamiento para calcular los 4 segmentos.');
+      return;
+    }
+
+    const datasetsRd4s = seriesDefs4s.map(s => {
+      const ok = !nminRd4s || s.rows.length >= nminRd4s;
+      return {
+        label: `${s.label} (N=${s.rows.length})`,
+        data: ok ? dimsRd4s.map(d => { const v = rcpMean(s.rows, d.col); return v!==null ? +v.toFixed(2) : null; }) : dimsRd4s.map(()=>null),
+        borderColor: s.color, backgroundColor: 'transparent',
+        pointBackgroundColor: s.color, borderWidth: 2.5, tension: 0.3, pointRadius: 4,
+        spanGaps: true,
+      };
+    });
+
+    const label4sRd = segVal ? (segCol+': '+segVal) : med;
+    const titleRd4s = rcpHideMedLabel ? def.nombre : (def.nombre + ' — ' + label4sRd);
+
+    chartCfg = {
+      type: 'line',
+      data: { labels: labelsRd4s, datasets: datasetsRd4s },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 20, bottom: 36, left: 10, right: 20 } },
+        plugins: {
+          title: { display: !rcpHideTitle, text: titleRd4s, font:{size:14,weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { position:'bottom', labels:{ font:{size:11}, padding:14 } },
+          tooltip: { callbacks: { label: ctx => ctx.dataset.label.replace(/\s*\(N=\d+\)$/,'') + ': ' + (ctx.parsed.y!=null ? ctx.parsed.y.toFixed(2) : '—') } },
+        },
+        scales: {
+          x: {
+            grid:{display:false},
+            ticks:{
+              font:{size:10}, maxRotation:90, minRotation:90, autoSkip:false,
+              callback: function(val) {
+                var lbl=this.getLabelForValue(val)||'';
+                var words=lbl.split(' '), lines=[];
+                for(var wi=0; wi<words.length; wi+=3) lines.push(words.slice(wi,wi+3).join(' '));
+                return lines.length>1?lines:lbl;
+              }
+            }
+          },
+          y: { min:1, max:6, grid:{color:'rgba(0,0,0,.05)'}, ticks:{ stepSize:1, font:{size:10} } },
+        },
+        animation: { duration: 400 },
+      },
+    };
+    RCP._chartState = null;
+    RCP._enpsState = null;
+    const toolsElRd4s = document.getElementById('rcp-enps-tools');
+    if (toolsElRd4s) { toolsElRd4s.style.display='none'; toolsElRd4s.innerHTML=''; }
 
   } else if(def.id==='demograficos') {
     const med = rcpGetParam('med') || (RCP.mediciones[RCP.mediciones.length-1]);

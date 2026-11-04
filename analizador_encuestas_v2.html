@@ -1440,16 +1440,29 @@ tr:hover td { background: var(--bg); }
       <div class="card" style="background:var(--info-light);border-color:var(--info-border);margin-bottom:1rem">
         <p style="margin:0;font-size:13px;color:var(--text2)">
           Genera el informe PowerPoint estándar (portada, metodología, resultados y cierre) con el
-          diseño de los informes de referencia. Reutiliza la base cargada en <b>📈 Gráficos</b> — si
-          aún no la has subido ahí, hazlo primero.
+          diseño de los informes de referencia.
         </p>
       </div>
 
-      <div id="ir-no-data" class="card" style="display:none;background:var(--warning-light,#fff8e6);border-color:var(--warning-border,#f5d87a)">
-        <p style="margin:0;font-size:13px">⚠ No hay datos cargados todavía. Ve a la pestaña <b>📈 Gráficos</b> y sube ahí tu Excel de resultados — Informe Resultados usa esa misma base.</p>
+      <!-- Paso A: cargar BBDD (propio de esta pestaña — también deja la base disponible en 📈 Gráficos) -->
+      <div id="ir-upload-wrap">
+        <div class="drop-zone" id="ir-dz" onclick="document.getElementById('ir-fi').click()"
+             ondragover="irDov(event)" ondragleave="irDol()" ondrop="irDdr(event)">
+          <input type="file" id="ir-fi" accept=".xlsx,.xls,.csv" style="display:none" onchange="irLoadFile(event)">
+          <div class="drop-icon">📂</div>
+          <div class="drop-title">Arrastra la BBDD de resultados aquí</div>
+          <div class="drop-sub">Archivo con todas las mediciones · .xlsx, .xls, .csv</div>
+        </div>
       </div>
 
-      <div id="ir-form-wrap" class="card">
+      <div id="ir-form-wrap" class="card" style="display:none">
+        <div class="file-bar" style="margin-bottom:1rem">
+          <div>
+            <div class="file-name" id="ir-fname"></div>
+            <div class="file-meta" id="ir-fmeta"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="irChangeFile()">↩ Cargar otro archivo</button>
+        </div>
         <h3 style="margin-top:0">Datos del informe</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:760px">
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
@@ -10758,11 +10771,45 @@ async function ropBatchExport() {
 // en fases siguientes.
 let IR = {};
 
+// ── Carga de BBDD propia de Informe Resultados ──────────────────────────────
+// Sube el archivo directamente desde esta pestaña (no obliga a pasar primero
+// por 📈 Gráficos). Reutiliza rcpProcess() para no duplicar la lógica de
+// detección de columnas/mediciones — como efecto secundario, la base también
+// queda cargada en Gráficos, lo cual es una ventaja (misma base en ambos
+// lados), no un acoplamiento que haya que ocultar.
+function irDov(e) { e.preventDefault(); document.getElementById('ir-dz').classList.add('over'); }
+function irDol() { document.getElementById('ir-dz').classList.remove('over'); }
+function irDdr(e) {
+  e.preventDefault(); irDol();
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  irReadAndProcess(f);
+}
+function irLoadFile(e) {
+  const f = e.target.files[0]; if (!f) return;
+  irReadAndProcess(f);
+}
+function irReadAndProcess(f) {
+  const r = new FileReader();
+  r.onerror = () => alert('Error leyendo el archivo. Verifica que no esté dañado.');
+  r.onload = ev => {
+    rcpProcess(XLSX.read(ev.target.result, { type: 'array' }), f.name);
+    irRefreshForm();
+  };
+  r.readAsArrayBuffer(f);
+}
+function irChangeFile() {
+  document.getElementById('ir-upload-wrap').style.display = 'block';
+  document.getElementById('ir-form-wrap').style.display = 'none';
+}
+
 function irRefreshForm() {
   const hasData = RCP.headers && RCP.headers.length > 0;
-  document.getElementById('ir-no-data').style.display = hasData ? 'block' : 'none';
+  document.getElementById('ir-upload-wrap').style.display = hasData ? 'none' : 'block';
   document.getElementById('ir-form-wrap').style.display = hasData ? 'block' : 'none';
   if (!hasData) return;
+
+  document.getElementById('ir-fname').textContent = RCP.filename || '';
+  document.getElementById('ir-fmeta').textContent = RCP.rows.length + ' personas · ' + RCP.headers.length + ' columnas';
 
   const medSel = document.getElementById('ir_med');
   const meds = RCP.mediciones || [];
@@ -10770,10 +10817,8 @@ function irRefreshForm() {
   if (meds.length) medSel.value = meds[meds.length - 1];
 
   const particInput = document.getElementById('ir_particip');
-  if (!particInput.value) {
-    const n = medSel.value ? rcpRowsByMed(medSel.value).length : RCP.rows.length;
-    particInput.value = n;
-  }
+  const n = medSel.value ? rcpRowsByMed(medSel.value).length : RCP.rows.length;
+  particInput.value = n;
 }
 
 async function irLoadPptxLib() {

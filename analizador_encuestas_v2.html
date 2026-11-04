@@ -709,6 +709,15 @@ tr:hover td { background: var(--bg); }
         <div class="slbl">No presentes en este archivo</div>
         <div class="chips" id="p1-missing"></div>
       </div>
+      <div id="p1-partial-wrap" style="display:none;margin-top:1rem;padding:12px 14px;background:#fff8e6;border:1px solid #f5d87a;border-radius:var(--radius-sm)">
+        <div style="font-size:13px;font-weight:600;color:#7a5c00;margin-bottom:6px">⚠ Dimensiones con menos preguntas de las esperadas</div>
+        <div style="font-size:12px;color:#5c4600;margin-bottom:8px">
+          Los promedios de estas dimensiones se calculan igual, usando solo las preguntas disponibles.
+          Esto es normal si la encuesta fue <b>acortada intencionalmente</b> para este cliente — pero si no
+          sabes por qué faltan, verifica la carga antes de reportar los resultados.
+        </div>
+        <div id="p1-partial-list" style="font-size:12px;color:#5c4600;display:flex;flex-direction:column;gap:3px"></div>
+      </div>
     </div>
     <div class="footer-nav">
       <div></div>
@@ -1635,7 +1644,9 @@ function detectDimensions(headers) {
       qCols = dim.altPreguntas.map(q => ({ q, col: findCol(q, headers) })).filter(x => x.col);
     }
     if (qCols.length > 0) {
-      found.push({ dim, qCols, partial: qCols.length < dim.preguntas.length });
+      const foundCodes = new Set(qCols.map(x => x.q));
+      const missingCodes = dim.preguntas.filter(q => !foundCodes.has(q));
+      found.push({ dim, qCols, partial: qCols.length < dim.preguntas.length, missingCodes });
     } else {
       // Fallback: aceptar bases con solo columna pre-calculada (sin ítems individuales)
       const sysCol = findSysCol(dim, headers);
@@ -1765,6 +1776,17 @@ function renderStep1() {
     document.getElementById('p1-missing').innerHTML = d.missing.map(m =>
       `<span class="chip missing">${m.nombre}</span>`
     ).join('');
+  }
+  const partialDims = d.found.filter(f => f.partial);
+  const partialWrap = document.getElementById('p1-partial-wrap');
+  if (partialDims.length) {
+    partialWrap.style.display = 'block';
+    document.getElementById('p1-partial-list').innerHTML = partialDims.map(f =>
+      `<div>• <b>${escHtml(f.dim.nombre)}</b>: ${f.qCols.length} de ${f.dim.preguntas.length} preguntas
+       (faltan ${f.missingCodes.map(c => escHtml(c)).join(', ')})</div>`
+    ).join('');
+  } else {
+    partialWrap.style.display = 'none';
   }
   goStep(1);
 }
@@ -2495,15 +2517,20 @@ function runNewVars() {
 
   const weMap = {};
   ['WE1','WE2','WE3','WE4','WE5','WE6','WE7','WE8','WE9'].forEach(q => {
-    weMap[q] = findCol(q, G.headers);
+    weMap[q] = itemTextCol(q, G.headers);
   });
-  const exCols  = ['EX1','EX2','EX3','EX4'].map(q => findCol(q, G.headers));
+  const exCols  = ['EX1','EX2','EX3','EX4'].map(q => itemTextCol(q, G.headers));
   const enpsCol = findCol('eNPS', G.headers);
 
   const getV = (row, col) => col ? parseFloat(row[G.headers.indexOf(col)]) : NaN;
+  // Promedia con las preguntas disponibles, no exige que estén TODAS presentes —
+  // algunos clientes aplican una versión acortada de la encuesta (mismas
+  // dimensiones, menos ítems por dimensión) y antes esto dejaba el promedio
+  // completo en null. Ver banner de "Dimensiones con menos preguntas de las
+  // esperadas" en Paso 1 (detectDimensions) para que el consultor lo valide.
   const avg = (...vals) => {
     const valid = vals.filter(x => x !== null && !isNaN(x));
-    return valid.length === vals.length ? valid.reduce((a,b) => a+b, 0) / valid.length : null;
+    return valid.length ? valid.reduce((a,b) => a+b, 0) / valid.length : null;
   };
 
   // Pasada 1: valores continuos por persona

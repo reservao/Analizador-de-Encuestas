@@ -978,6 +978,7 @@ tr:hover td { background: var(--bg); }
       <button class="btn btn-primary" id="r-sub-btn-tables" onclick="rGoSub('tables')">📊 Tablas Excel</button>
       <button class="btn btn-secondary" id="r-sub-btn-charts" onclick="rGoSub('charts')">📈 Gráficos</button>
       <button class="btn btn-secondary" id="r-sub-btn-onepage" onclick="rGoSub('onepage')">📄 One Page</button>
+      <button class="btn btn-secondary" id="r-sub-btn-informe" onclick="rGoSub('informe')">📑 Informe Resultados</button>
     </div>
 
     <!-- SUBSECCIÓN TABLAS -->
@@ -1413,6 +1414,70 @@ tr:hover td { background: var(--bg); }
 
       </div>
     </div><!-- /r-sub-onepage -->
+
+    <!-- SUBSECCIÓN INFORME RESULTADOS -->
+    <div id="r-sub-informe" style="display:none">
+      <div class="card" style="background:var(--info-light);border-color:var(--info-border);margin-bottom:1rem">
+        <p style="margin:0;font-size:13px;color:var(--text2)">
+          Genera el informe PowerPoint estándar (portada, metodología, resultados y cierre) con el
+          diseño de los informes de referencia. Reutiliza la base cargada en <b>📈 Gráficos</b> — si
+          aún no la has subido ahí, hazlo primero.
+        </p>
+      </div>
+
+      <div id="ir-no-data" class="card" style="display:none;background:var(--warning-light,#fff8e6);border-color:var(--warning-border,#f5d87a)">
+        <p style="margin:0;font-size:13px">⚠ No hay datos cargados todavía. Ve a la pestaña <b>📈 Gráficos</b> y sube ahí tu Excel de resultados — Informe Resultados usa esa misma base.</p>
+      </div>
+
+      <div id="ir-form-wrap" class="card">
+        <h3 style="margin-top:0">Datos del informe</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:760px">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Nombre del cliente / empresa
+            <input type="text" id="ir_cliente" placeholder="Ej: Grupo GA"
+              style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Medición a reportar
+            <select id="ir_med" style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Alcance (N convocados)
+            <input type="number" id="ir_alcance" min="0" placeholder="Ej: 56"
+              style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Participación (N respuestas)
+            <input type="number" id="ir_particip" min="0" placeholder="Autodetectado de la base"
+              style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Fecha inicio medición
+            <input type="text" id="ir_fecha_ini" placeholder="Ej: 6 de Octubre"
+              style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Fecha término medición
+            <input type="text" id="ir_fecha_fin" placeholder="Ej: 16 de Octubre"
+              style="padding:7px 9px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2)">
+            Logo del cliente (opcional, PNG/JPG)
+            <input type="file" id="ir_logo" accept="image/png,image/jpeg"
+              style="padding:5px 0;font-size:12px">
+          </label>
+        </div>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:10px">
+          <button class="btn btn-primary" id="ir-generate-btn" onclick="irGenerate()">⬇ Generar Informe (.pptx)</button>
+          <span id="ir-status" style="font-size:12px;color:var(--text2)"></span>
+        </div>
+        <div id="ir-progress-wrap" style="display:none;margin-top:.6rem;max-width:760px">
+          <div style="background:#e2e8f0;border-radius:4px;height:7px;overflow:hidden">
+            <div id="ir-progress-bar" style="background:#2563eb;height:100%;width:0%;transition:width .3s ease"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /r-sub-informe -->
 
   </div><!-- /main -->
 </div><!-- /sec3 -->
@@ -4230,10 +4295,11 @@ function goSection(n) {
 
 // ─── SECCIÓN 3: REPORTERÍA ─────────────────────────────────────────────────
 function rGoSub(sub) {
-  ['tables','charts','onepage'].forEach(s => {
+  ['tables','charts','onepage','informe'].forEach(s => {
     document.getElementById('r-sub-'+s).style.display = sub===s ? 'block' : 'none';
     document.getElementById('r-sub-btn-'+s).className = sub===s ? 'btn btn-primary' : 'btn btn-secondary';
   });
+  if (sub === 'informe' && typeof irRefreshForm === 'function') irRefreshForm();
 }
 
 let R = { headers:[], rows:[], filename:'', mediciones:[], selectedMeds:[] };
@@ -10548,6 +10614,218 @@ async function ropBatchExport() {
     btn.disabled = false;
     btn.textContent = '⬇ Generar PPT';
     progWrap.style.display = 'none';
+  }
+}
+
+// ─── Sección 3: Informe Resultados (IR) ────────────────────────────────────
+// Genera el informe PowerPoint estándar clonando el diseño de los informes
+// de referencia (portada navy + divisores + slides de resultados). Reutiliza
+// los datos ya cargados en RCP (pestaña 📈 Gráficos) — no tiene upload propio.
+// Fase 1: portada, divisor de sección y "Aplicación de la Encuesta". Las
+// secciones de resultados (Engagement/Agotamiento, 4 Segmentos, Recursos y
+// Demandas, eNPS, Resultados por Dimensión, Ranking Criticidad) se agregan
+// en fases siguientes.
+let IR = {};
+
+function irRefreshForm() {
+  const hasData = RCP.headers && RCP.headers.length > 0;
+  document.getElementById('ir-no-data').style.display = hasData ? 'block' : 'none';
+  document.getElementById('ir-form-wrap').style.display = hasData ? 'block' : 'none';
+  if (!hasData) return;
+
+  const medSel = document.getElementById('ir_med');
+  const meds = RCP.mediciones || [];
+  medSel.innerHTML = meds.map(m => `<option value="${escJsAttr(m)}">${escHtml(m)}</option>`).join('');
+  if (meds.length) medSel.value = meds[meds.length - 1];
+
+  const particInput = document.getElementById('ir_particip');
+  if (!particInput.value) {
+    const n = medSel.value ? rcpRowsByMed(medSel.value).length : RCP.rows.length;
+    particInput.value = n;
+  }
+}
+
+async function irLoadPptxLib() {
+  const load = (src) => new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res;
+    s.onerror = () => rej(new Error('No se pudo cargar: ' + src));
+    document.head.appendChild(s);
+  });
+  if (typeof PptxGenJS === 'undefined')
+    await load('https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js');
+}
+
+function irReadLogoFile() {
+  return new Promise((resolve) => {
+    const inp = document.getElementById('ir_logo');
+    const f = inp.files && inp.files[0];
+    if (!f) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(f);
+  });
+}
+
+// Fondo degradado navy (estilo portada/divisores de los informes de referencia),
+// generado en canvas en vez de incrustar un asset — se reutiliza en varias slides.
+function irGradientBg() {
+  const w = 1920, h = 1080;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, '#05081C');
+  g.addColorStop(0.55, '#0B1A4A');
+  g.addColorStop(1, '#1B3F6E');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  return c.toDataURL('image/png');
+}
+
+function irAddDivider(pptx, bgData, num, title) {
+  const slide = pptx.addSlide();
+  slide.addImage({ data: bgData, x: 0, y: 0, w: 13.333, h: 7.5 });
+  slide.addText(`[${String(num).padStart(2, '0')}]`, {
+    x: 0.9, y: 3.0, w: 3, h: 0.5, fontFace: 'Arial', fontSize: 14,
+    color: '8FA3D9', bold: true, isTextBox: true, margin: 0
+  });
+  slide.addText(title, {
+    x: 0.9, y: 3.4, w: 10, h: 1.2, fontFace: 'Arial', fontSize: 32,
+    italic: true, bold: true, color: 'FFFFFF', isTextBox: true, margin: 0
+  });
+}
+
+const IR_MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio',
+  'Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+async function irGenerate() {
+  if (!RCP.headers || !RCP.headers.length) {
+    alert('Primero carga tu base en la pestaña 📈 Gráficos — Informe Resultados reutiliza esos datos.');
+    return;
+  }
+  const btn      = document.getElementById('ir-generate-btn');
+  const statusEl = document.getElementById('ir-status');
+  const progWrap = document.getElementById('ir-progress-wrap');
+  const barEl    = document.getElementById('ir-progress-bar');
+  btn.disabled = true; btn.textContent = 'Generando...';
+  progWrap.style.display = 'block'; barEl.style.width = '5%';
+  statusEl.textContent = 'Preparando...';
+
+  try {
+    await irLoadPptxLib();
+
+    const cliente   = document.getElementById('ir_cliente').value.trim() || 'Cliente';
+    const med       = document.getElementById('ir_med').value;
+    const alcance   = parseInt(document.getElementById('ir_alcance').value) || 0;
+    const particip  = parseInt(document.getElementById('ir_particip').value) ||
+                       (med ? rcpRowsByMed(med).length : RCP.rows.length);
+    const fechaIni  = document.getElementById('ir_fecha_ini').value.trim();
+    const fechaFin  = document.getElementById('ir_fecha_fin').value.trim();
+    const tasaResp  = alcance > 0 ? Math.round((particip / alcance) * 100) : null;
+    const logoData  = await irReadLogoFile();
+
+    const pptx = new PptxGenJS();
+    pptx.defineLayout({ name: 'IR169', width: 13.333, height: 7.5 });
+    pptx.layout = 'IR169';
+
+    const bgData = irGradientBg();
+    barEl.style.width = '15%';
+
+    // ── Slide 1: Portada ──────────────────────────────────────────────────
+    {
+      const slide = pptx.addSlide();
+      slide.addImage({ data: bgData, x: 0, y: 0, w: 13.333, h: 7.5 });
+      if (logoData) {
+        slide.addImage({ data: logoData, x: 0.6, y: 0.45, w: 1.8, h: 1.0,
+          sizing: { type: 'contain', w: 1.8, h: 1.0 } });
+      }
+      slide.addText('Gestión de Ambientes Laborales', {
+        x: 0.6, y: 2.2, w: 9, h: 0.5, fontFace: 'Arial', fontSize: 14,
+        bold: true, italic: true, color: 'FFFFFF', isTextBox: true, margin: 0
+      });
+      slide.addText('Protegiendo la calidad de vida en el trabajo', {
+        x: 0.6, y: 2.6, w: 9, h: 0.4, fontFace: 'Arial', fontSize: 11,
+        color: 'B7C2E8', isTextBox: true, margin: 0
+      });
+      slide.addText(`Presentación de Resultados y Hallazgos ${cliente}`, {
+        x: 0.6, y: 3.3, w: 11, h: 1.2, fontFace: 'Arial', fontSize: 30,
+        bold: true, color: 'FFFFFF', isTextBox: true, margin: 0
+      });
+      const fecha = new Date();
+      slide.addText(`${IR_MESES_ES[fecha.getMonth()]} ${fecha.getFullYear()}`, {
+        x: 0.6, y: 4.6, w: 6, h: 0.4, fontFace: 'Arial', fontSize: 12,
+        color: 'B7C2E8', isTextBox: true, margin: 0
+      });
+      slide.addText(`Informe Medición Engagement — ${cliente} ${fecha.getFullYear()}`, {
+        x: 0.6, y: 5.0, w: 10, h: 0.4, fontFace: 'Arial', fontSize: 12,
+        color: 'B7C2E8', isTextBox: true, margin: 0
+      });
+    }
+    barEl.style.width = '35%';
+
+    // ── Slide 2: Divisor de sección ─────────────────────────────────────────
+    irAddDivider(pptx, bgData, 3, 'Resultados');
+    barEl.style.width = '55%';
+
+    // ── Slide 3: Aplicación de la Encuesta ──────────────────────────────────
+    {
+      const slide = pptx.addSlide();
+      slide.background = { color: 'FFFFFF' };
+      slide.addText('Aplicación', {
+        x: 0.6, y: 0.5, w: 5, h: 0.5, fontFace: 'Arial', fontSize: 22,
+        italic: true, bold: true, color: '1B3F6E', isTextBox: true, margin: 0
+      });
+      slide.addText('de la Encuesta', {
+        x: 0.6, y: 0.95, w: 5, h: 0.5, fontFace: 'Arial', fontSize: 22,
+        italic: true, bold: true, color: '1B3F6E', isTextBox: true, margin: 0
+      });
+
+      const gaugeColor = tasaResp === null ? '94A3B8'
+        : (tasaResp >= 70 ? '27AE60' : tasaResp >= 40 ? 'F9A825' : 'C0392B');
+      slide.addShape(pptx.ShapeType.ellipse, {
+        x: 1.2, y: 2.4, w: 2.6, h: 2.6, fill: { color: gaugeColor }, line: { type: 'none' }
+      });
+      slide.addText(tasaResp === null ? '—' : `${tasaResp}%`, {
+        x: 1.2, y: 2.4, w: 2.6, h: 2.6, align: 'center', valign: 'middle',
+        fontFace: 'Arial', fontSize: 30, bold: true, color: 'FFFFFF', isTextBox: true, margin: 0
+      });
+      slide.addText('Tasa de Respuesta', {
+        x: 1.0, y: 5.1, w: 3.0, h: 0.4, align: 'center', fontFace: 'Arial',
+        fontSize: 11, color: '44474F', isTextBox: true, margin: 0
+      });
+
+      let yy = 2.7;
+      [['Alcance:', `N = ${alcance || '—'}`], ['Participación:', `N = ${particip || '—'}`]].forEach(([label, val]) => {
+        slide.addText(label, { x: 5.2, y: yy, w: 2.2, h: 0.4, fontFace: 'Arial', fontSize: 12, color: '44474F', isTextBox: true, margin: 0 });
+        slide.addText(val,   { x: 7.4, y: yy, w: 2.0, h: 0.4, fontFace: 'Arial', fontSize: 12, bold: true, color: '1B3F6E', isTextBox: true, margin: 0 });
+        yy += 0.5;
+      });
+      slide.addText('Periodo Medición:', {
+        x: 5.2, y: 3.8, w: 4, h: 0.4, fontFace: 'Arial', fontSize: 12,
+        bold: true, color: '1B3F6E', isTextBox: true, margin: 0
+      });
+      slide.addText(`Fecha inicio: ${fechaIni || '—'}`, {
+        x: 5.2, y: 4.25, w: 4, h: 0.4, fontFace: 'Arial', fontSize: 11, color: '44474F', isTextBox: true, margin: 0
+      });
+      slide.addText(`Fecha término: ${fechaFin || '—'}`, {
+        x: 5.2, y: 4.65, w: 4, h: 0.4, fontFace: 'Arial', fontSize: 11, color: '44474F', isTextBox: true, margin: 0
+      });
+    }
+    barEl.style.width = '90%';
+
+    const fname = `Informe_Resultados_${cliente.replace(/[^a-zA-Z0-9_-]+/g, '_')}.pptx`;
+    await pptx.writeFile({ fileName: fname });
+    barEl.style.width = '100%';
+    statusEl.textContent = `✓ Informe generado (${fname}) — Paso 1: portada, divisor y Aplicación de la Encuesta. Las secciones de resultados vienen en los próximos pasos.`;
+  } catch (err) {
+    console.error('[IR] Error:', err);
+    statusEl.textContent = 'Error al generar el informe. Revisa la consola.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ Generar Informe (.pptx)';
+    setTimeout(() => { progWrap.style.display = 'none'; }, 1200);
   }
 }
 </script>

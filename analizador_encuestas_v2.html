@@ -10922,7 +10922,7 @@ function irConvertImageDataUrl(dataUrl, mime) {
       ctx.drawImage(img, 0, 0);
       canvas.toBlob((blob) => {
         if (!blob) { reject(new Error('No se pudo convertir la imagen')); return; }
-        blob.arrayBuffer().then(resolve).catch(reject);
+        blob.arrayBuffer().then(buf => resolve({ bytes: buf, width: img.naturalWidth, height: img.naturalHeight })).catch(reject);
       }, mime, 0.92);
     };
     img.onerror = () => reject(new Error('No se pudo leer la imagen'));
@@ -10947,13 +10947,26 @@ async function irBuildFromTemplate(tokens, images) {
 
   // 2) Imágenes placeholder: ubicar la forma nombrada PH_XXX, su rId de
   // imagen, y sobrescribir los bytes de esa media si se subió un reemplazo.
+  // También se ajusta el alto (<a:ext cy>) del cuadro al aspect ratio real
+  // de la imagen nueva (manteniendo el ancho original) para que un gráfico
+  // generado con otra proporción no quede estirado/achatado.
   for (const path of slidePaths) {
-    const xml = await zip.file(path).async('string');
+    let xml = await zip.file(path).async('string');
+    let xmlChanged = false;
     for (const [placeholderName, dataUrl] of Object.entries(images)) {
       if (!dataUrl) continue;
       const nameIdx = xml.indexOf(`name="${placeholderName}"`);
       if (nameIdx < 0) continue;
-      const blipMatch = xml.slice(nameIdx).match(/<a:blip r:embed="(rId\d+)"/);
+
+      // Bloque <p:pic>...</p:pic> que contiene esta forma (para acotar el
+      // ajuste de <a:ext> solo a esta imagen, no a otras del mismo slide).
+      const picStart = xml.lastIndexOf('<p:pic>', nameIdx);
+      const picEndTag = '</p:pic>';
+      const picEnd = xml.indexOf(picEndTag, nameIdx) + picEndTag.length;
+      if (picStart < 0 || picEnd < 0) continue;
+      const picBlock = xml.slice(picStart, picEnd);
+
+      const blipMatch = picBlock.match(/<a:blip r:embed="(rId\d+)"/);
       if (!blipMatch) continue;
       const rId = blipMatch[1];
 
@@ -10966,9 +10979,28 @@ async function irBuildFromTemplate(tokens, images) {
       const mediaPath = irResolveRelPath(path, targetMatch[1]);
 
       const mime = irMimeForPath(mediaPath);
-      const bytes = await irConvertImageDataUrl(dataUrl, mime);
+      const { bytes, width, height } = await irConvertImageDataUrl(dataUrl, mime);
       zip.file(mediaPath, bytes);
+
+      const extMatch = picBlock.match(/<a:ext cx="(\d+)" cy="(\d+)"\/>/);
+      if (extMatch && width && height) {
+        const cx = parseInt(extMatch[1], 10);
+        const origCy = parseInt(extMatch[2], 10);
+        // Ajustar el alto al aspect ratio real de la imagen nueva, pero sin
+        // alejarse demasiado del alto original — si no, un gráfico más alto
+        // (ej. con leyenda) puede montarse sobre otros elementos fijos de la
+        // lámina (textos, barras decorativas). Tolerancia: ±20%.
+        const aspectCy = Math.round(cx * (height / width));
+        const newCy = Math.min(Math.max(aspectCy, Math.round(origCy * 0.8)), Math.round(origCy * 1.2));
+        const newPicBlock = picBlock.replace(
+          `<a:ext cx="${extMatch[1]}" cy="${extMatch[2]}"/>`,
+          `<a:ext cx="${cx}" cy="${newCy}"/>`
+        );
+        xml = xml.slice(0, picStart) + newPicBlock + xml.slice(picEnd);
+        xmlChanged = true;
+      }
     }
+    if (xmlChanged) zip.file(path, xml);
   }
 
   return zip.generateAsync({
@@ -10983,6 +11015,45 @@ function irDownloadBlob(blob, filename) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+// ── Captura de gráficos predeterminados (RCP) para insertar en la plantilla ─
+// Reutiliza exactamente la misma lógica de "📈 Gráficos" (rcpSelectDef +
+// rcpGenerate) — Informe Resultados no reimplementa ningún cálculo nuevo,
+// solo dispara esos mismos gráficos "por detrás" y captura el canvas.
+// IMPORTANTE: rcpGenerate() necesita que el contenedor de Gráficos esté
+// visible (layout real) para medir el canvas — por eso irGenerate() hace
+// rGoSub('charts') antes de este bloque y rGoSub('informe') al terminar.
+function irSetSingleMed(paramId, med) {
+  // Param tipo meds_multi: un checkbox rcp_<paramId>_<i> por medición —
+  // dejamos marcada solo la medición que se está reportando.
+  document.querySelectorAll(`input[id^="rcp_${paramId}_"]`).forEach(cb => {
+    cb.checked = (cb.value === med);
+  });
+}
+
+async function irCaptureRcpChart(defId, med) {
+  const idx = RCP_DEFS.findIndex(d => d.id === defId);
+  if (idx < 0) throw new Error(`Gráfico no disponible en esta base: ${defId}`);
+  rcpSelectDef(idx);
+  // Esperar a que se pinten los params Y a que corra el setTimeout(50ms) que
+  // pone por defecto la ÚLTIMA medición en los selects med_single, para
+  // luego pisarlo con la medición que realmente se está reportando.
+  await new Promise(r => setTimeout(r, 90));
+  const medSingle = document.getElementById('rcp_med');
+  if (medSingle) medSingle.value = med;
+  else irSetSingleMed('meds', med);
+  // El título ya lo pone la lámina de la plantilla — ocultar el del gráfico
+  // para no duplicarlo encima.
+  const hideTitleEl = document.getElementById('rcp_hide_title');
+  if (hideTitleEl) hideTitleEl.checked = true;
+  rcpGenerate();
+  await new Promise(r => setTimeout(r, 400));
+  const canvas = document.getElementById('rcp-canvas');
+  if (!canvas || !canvas.width || !canvas.height) {
+    throw new Error(`No se pudo generar el gráfico "${defId}" (¿faltan columnas en la base?).`);
+  }
+  return canvas.toDataURL('image/png');
 }
 
 async function irGenerate() {
@@ -11026,18 +11097,65 @@ async function irGenerate() {
       FECHA_INICIO: fechaIni || '—',
       FECHA_TERMINO: fechaFin || '—',
     };
-    barEl.style.width = '50%';
+
+    // Datos del cuadrante 4 Segmentos (N y % por segmento) — no requieren
+    // generar el gráfico, se calculan directo sobre las filas de la medición.
+    const seg4 = rcpCuadrante4Seg(med ? rcpRowsByMed(med) : RCP.rows);
+    Object.assign(tokens, {
+      SEG_N_TOTAL:         seg4 ? String(seg4.n)             : '—',
+      SEG_N_COMPULSION:    seg4 ? String(seg4.comprometidosN): '—',
+      SEG_PCT_COMPULSION:  seg4 ? String(seg4.comprometidos) : '—',
+      SEG_N_ENGAGEMENT:    seg4 ? String(seg4.engagementN)   : '—',
+      SEG_PCT_ENGAGEMENT:  seg4 ? String(seg4.engagement)    : '—',
+      SEG_N_AGOTADOS:      seg4 ? String(seg4.agotadosN)     : '—',
+      SEG_PCT_AGOTADOS:    seg4 ? String(seg4.agotados)      : '—',
+      SEG_N_ZONAGRIS:      seg4 ? String(seg4.zonaGrisN)     : '—',
+      SEG_PCT_ZONAGRIS:    seg4 ? String(seg4.zonaGris)      : '—',
+    });
+    barEl.style.width = '35%';
+
+    // Generar los gráficos predeterminados "por detrás" (misma pestaña
+    // Gráficos) y capturarlos como PNG para insertarlos en la plantilla.
+    statusEl.textContent = 'Generando gráficos...';
+    rGoSub('charts');
+    let chartImages;
+    try {
+      const imgEngagement       = await irCaptureRcpChart('eng_col', med);
+      const imgAgotamiento      = await irCaptureRcpChart('agot_col', med);
+      const imgSeg              = await irCaptureRcpChart('cuadrante_4seg', med);
+      const imgSegRd            = await irCaptureRcpChart('cuadrante_4seg_rd', med);
+      const imgRecursosDemandas = await irCaptureRcpChart('recursos_demandas', med);
+      const imgEnps             = await irCaptureRcpChart('enps', med);
+      const dsP = RCP.chart?.data?.datasets?.find(d => d.label === 'Promotores');
+      const dsD = RCP.chart?.data?.datasets?.find(d => d.label === 'Detractores');
+      tokens.ENPS_VALUE = (dsP && dsD) ? String(Math.round((dsP.data[0] ?? 0) - (dsD.data[0] ?? 0))) : '—';
+      const imgOptimoCritico    = await irCaptureRcpChart('optimo_critico', med);
+
+      chartImages = {
+        PH_CHART_ENGAGEMENT: imgEngagement,
+        PH_CHART_AGOTAMIENTO: imgAgotamiento,
+        PH_CHART_4SEG: imgSeg,
+        PH_CHART_4SEG_RD: imgSegRd,
+        PH_CHART_RECURSOS_DEMANDAS: imgRecursosDemandas,
+        PH_CHART_ENPS: imgEnps,
+        PH_CHART_OPTIMO_CRITICO: imgOptimoCritico,
+      };
+    } finally {
+      rGoSub('informe');
+    }
+    barEl.style.width = '70%';
 
     const blob = await irBuildFromTemplate(tokens, {
       PH_LOGO_CLIENTE: logoData,
       PH_FOTO_PORTADA: coverPhotoData,
+      ...chartImages,
     });
     barEl.style.width = '90%';
 
     const fname = `Informe_Resultados_${cliente.replace(/[^a-zA-Z0-9_-]+/g, '_')}.pptx`;
     irDownloadBlob(blob, fname);
     barEl.style.width = '100%';
-    statusEl.textContent = `✓ Informe generado (${fname}) a partir de la plantilla — portada, divisor y Aplicación de la Encuesta. Las secciones de resultados vienen en los próximos pasos.`;
+    statusEl.textContent = `✓ Informe generado (${fname}) — portada, Aplicación de la Encuesta, Engagement/Agotamiento, 4 Segmentos, Recursos y Demandas, eNPS y Óptimo vs Crítico. Resultados por Dimensión y Ranking Criticidad vienen en los próximos pasos.`;
   } catch (err) {
     console.error('[IR] Error:', err);
     statusEl.textContent = 'Error al generar el informe. Revisa la consola.';

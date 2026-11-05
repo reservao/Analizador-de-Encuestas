@@ -6666,7 +6666,7 @@ function rcpGenerate() {
     const useW = Math.max(600, nBars * 80, containerW);
     const extraHeight = nBars > 2 ? Math.min(100, nBars * 5) : 0;
     const h = 420 + extraHeight;
-    if(canvasInner){ canvasInner.style.width=useW+'px'; canvasInner.style.height=h+'px'; }
+    if(canvasInner){ canvasInner.style.width=useW+'px'; canvasInner.style.height=h+'px'; canvasInner.style.minHeight=h+'px'; }
     if(canvasEl){ canvasEl.style.height=h+'px'; canvasEl.style.minHeight=h+'px'; }
 
     // Benchmark lines
@@ -7359,7 +7359,10 @@ function rcpGenerate() {
     const h = alturaParam > 0 ? alturaParam : hAuto;
     const canvasEl = document.getElementById('rcp-canvas');
     const canvasInner = document.getElementById('rcp-canvas-inner');
-    if(canvasInner){ canvasInner.style.width='100%'; canvasInner.style.height=h+'px'; }
+    // El div interno trae min-height:460px fijo en el HTML — si no se pisa
+    // explícitamente, un alto menor a 460 (ej. altura manual chica) queda
+    // sin efecto porque min-height le gana a height en CSS.
+    if(canvasInner){ canvasInner.style.width='100%'; canvasInner.style.height=h+'px'; canvasInner.style.minHeight=h+'px'; }
     if(canvasEl){ canvasEl.style.height=h+'px'; canvasEl.style.minHeight=h+'px'; }
     const hSlider = document.getElementById('rcp-height-slider');
     const hLbl    = document.getElementById('rcp-height-label');
@@ -10986,12 +10989,13 @@ async function irBuildFromTemplate(tokens, images) {
       if (extMatch && width && height) {
         const cx = parseInt(extMatch[1], 10);
         const origCy = parseInt(extMatch[2], 10);
-        // Ajustar el alto al aspect ratio real de la imagen nueva, pero sin
-        // alejarse demasiado del alto original — si no, un gráfico más alto
-        // (ej. con leyenda) puede montarse sobre otros elementos fijos de la
-        // lámina (textos, barras decorativas). Tolerancia: ±20%.
+        // Ajustar el alto al aspect ratio real de la imagen nueva. Solo se
+        // limita que CREZCA demasiado respecto al original (si no, un
+        // gráfico más alto —ej. con leyenda— puede montarse sobre otros
+        // elementos fijos de la lámina); que quede más flaco/bajo que el
+        // original no tiene ese riesgo, así que no se le pone piso.
         const aspectCy = Math.round(cx * (height / width));
-        const newCy = Math.min(Math.max(aspectCy, Math.round(origCy * 0.8)), Math.round(origCy * 1.2));
+        const newCy = Math.min(aspectCy, Math.round(origCy * 1.2));
         const newPicBlock = picBlock.replace(
           `<a:ext cx="${extMatch[1]}" cy="${extMatch[2]}"/>`,
           `<a:ext cx="${cx}" cy="${newCy}"/>`
@@ -11032,7 +11036,8 @@ function irSetSingleMed(paramId, med) {
   });
 }
 
-async function irCaptureRcpChart(defId, med) {
+async function irCaptureRcpChart(defId, med, opts) {
+  opts = opts || {};
   const idx = RCP_DEFS.findIndex(d => d.id === defId);
   if (idx < 0) throw new Error(`Gráfico no disponible en esta base: ${defId}`);
   rcpSelectDef(idx);
@@ -11047,6 +11052,12 @@ async function irCaptureRcpChart(defId, med) {
   // para no duplicarlo encima.
   const hideTitleEl = document.getElementById('rcp_hide_title');
   if (hideTitleEl) hideTitleEl.checked = true;
+  // Alto explícito opcional (ej. eNPS: más flaco que el cálculo automático,
+  // que para un solo grupo igual arma una barra bastante gruesa).
+  if (opts.altura) {
+    const alturaEl = document.getElementById('rcp_altura');
+    if (alturaEl) alturaEl.value = opts.altura;
+  }
   rcpGenerate();
   await new Promise(r => setTimeout(r, 400));
   const canvas = document.getElementById('rcp-canvas');
@@ -11125,7 +11136,7 @@ async function irGenerate() {
       const imgSeg              = await irCaptureRcpChart('cuadrante_4seg', med);
       const imgSegRd            = await irCaptureRcpChart('cuadrante_4seg_rd', med);
       const imgRecursosDemandas = await irCaptureRcpChart('recursos_demandas', med);
-      const imgEnps             = await irCaptureRcpChart('enps', med);
+      const imgEnps              = await irCaptureRcpChart('enps', med, { altura: 190 });
       const dsP = RCP.chart?.data?.datasets?.find(d => d.label === 'Promotores');
       const dsD = RCP.chart?.data?.datasets?.find(d => d.label === 'Detractores');
       tokens.ENPS_VALUE = (dsP && dsD) ? String(Math.round((dsP.data[0] ?? 0) - (dsD.data[0] ?? 0))) : '—';

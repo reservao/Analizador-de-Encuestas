@@ -5632,13 +5632,23 @@ function rcpRowsByMed(med) {
 // EXACTAMENTE la misma regla de quién cuenta como respondiente completo.
 function rcpEngAgoCtx() {
   const engBinIdx = rcpColIdxFuzzy('ALTO_ENGAGEMENT');
+  // Fallback intermedio: VIGOR_BINARY/DEDICATION_BINARY/ABSORTION_BINARY —
+  // flags por sub-dimensión que la plataforma ya calculó con SU propia fórmula
+  // (que puede no ser un simple promedio de 3 ítems — confirmado con una base
+  // real donde recalcular desde los ítems daba 12.3% en vez del 11.3% correcto
+  // que sí daban estos tres binarios combinados). Se usan ANTES de recalcular
+  // desde los ítems crudos, igual que ALTO_ENGAGEMENT tiene prioridad sobre ambos.
+  const vigorBinIdx = rcpColIdxFuzzy('VIGOR_BINARY');
+  const dedBinIdx   = rcpColIdxFuzzy('DEDICATION_BINARY');
+  const absBinIdx   = rcpColIdxFuzzy('ABSORTION_BINARY');
+  const hasSubBinFallback = vigorBinIdx >= 0 && dedBinIdx >= 0 && absBinIdx >= 0;
   const agoBinIdx = (() => { const i = rcpColIdxFuzzy('EXHAUSTED_BYNARY'); return i >= 0 ? i : rcpColIdxFuzzy('ALTO_AGOTAMIENTO'); })();
   const weGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
   const weIdxs = weGroups.map(g => g.map(c => rcpItemIdx(c)).filter(i => i >= 0));
   const hasWEFallback = weIdxs.every(g => g.length);
   const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
   const hasEXFallback = exIdxs.length > 0;
-  return { engBinIdx, agoBinIdx, weIdxs, hasWEFallback, exIdxs, hasEXFallback };
+  return { engBinIdx, vigorBinIdx, dedBinIdx, absBinIdx, hasSubBinFallback, agoBinIdx, weIdxs, hasWEFallback, exIdxs, hasEXFallback };
 }
 
 // engFlag/agoFlag quedan en null cuando la persona no respondió esa dimensión
@@ -5648,6 +5658,12 @@ function rcpEngAgoFlags(row, ctx) {
   if (ctx.engBinIdx >= 0) {
     const v = parseFloat(row[ctx.engBinIdx]);
     if (!isNaN(v)) engFlag = v === 1 ? 1 : 0;
+  }
+  if (engFlag === null && ctx.hasSubBinFallback) {
+    const vg = parseFloat(row[ctx.vigorBinIdx]);
+    const dg = parseFloat(row[ctx.dedBinIdx]);
+    const ag = parseFloat(row[ctx.absBinIdx]);
+    if (!isNaN(vg) && !isNaN(dg) && !isNaN(ag)) engFlag = (vg===1 && dg===1 && ag===1) ? 1 : 0;
   }
   if (engFlag === null && ctx.hasWEFallback) {
     engFlag = ctx.weIdxs.every(idxs => {

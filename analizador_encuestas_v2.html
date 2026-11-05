@@ -6517,6 +6517,15 @@ function rcpGenerate() {
   if(rcpTableWrap){ rcpTableWrap.style.display='none'; rcpTableWrap.innerHTML=''; }
   if(rcpExtraWrap){ rcpExtraWrap.style.display='none'; rcpExtraWrap.innerHTML=''; }
   if(rcpCanvasInner) rcpCanvasInner.style.display='';
+  // Alto por defecto (460px, el mismo que trae el HTML) ANTES de entrar a la
+  // rama específica de cada tipo de gráfico — no todos los tipos fijan su
+  // propio alto explícito (ej. "Óptimo vs Crítico"), así que sin este reset
+  // heredan el alto que haya dejado puesto el ÚLTIMO gráfico generado (ej.
+  // un eNPS angosto a propósito), quedando desproporcionados. El ancho NO
+  // se resetea acá: es una preferencia del usuario (slider "Ancho") que debe
+  // mantenerse entre gráficos.
+  if (rcpCanvasInner) { rcpCanvasInner.style.height = '460px'; rcpCanvasInner.style.minHeight = '460px'; }
+  if (rcpCanvas) { rcpCanvas.style.height = '460px'; rcpCanvas.style.minHeight = '460px'; }
   const ctx = rcpCanvas.getContext('2d');
 
   // ── RECURSOS Y DEMANDAS ──────────────────────────────────────────────────
@@ -10935,11 +10944,14 @@ function irConvertImageDataUrl(dataUrl, mime) {
 
 // Reemplaza en el zip de la plantilla los {{TOKENS}} de texto y las imágenes
 // placeholder nombradas, y devuelve el Blob del .pptx final.
-async function irBuildFromTemplate(tokens, images) {
-  const zip = await JSZip.loadAsync(IR.templateBuffer);
-  const slidePaths = Object.keys(zip.files).filter(p => /^ppt\/slides\/slide\d+\.xml$/.test(p));
+function irSlidePaths(zip) {
+  return Object.keys(zip.files).filter(p => /^ppt\/slides\/slide\d+\.xml$/.test(p));
+}
 
-  // 1) Texto: reemplazo literal de {{TOKEN}} en cada slide
+// Reemplazo literal de {{TOKEN}} en el texto de cada slide del zip (en el
+// lugar — no genera un zip nuevo). Se usa tanto para las láminas fijas como,
+// con otro set de tokens, para cada copia que genera irExpandSlide().
+async function irApplyTokens(zip, slidePaths, tokens) {
   for (const path of slidePaths) {
     const xml = await zip.file(path).async('string');
     if (!xml.includes('{{')) continue;
@@ -10947,65 +10959,253 @@ async function irBuildFromTemplate(tokens, images) {
       (key in tokens) ? irEscXml(tokens[key]) : m);
     zip.file(path, replaced);
   }
+}
 
-  // 2) Imágenes placeholder: ubicar la forma nombrada PH_XXX, su rId de
-  // imagen, y sobrescribir los bytes de esa media si se subió un reemplazo.
-  // También se ajusta el alto (<a:ext cy>) del cuadro al aspect ratio real
-  // de la imagen nueva (manteniendo el ancho original) para que un gráfico
-  // generado con otra proporción no quede estirado/achatado.
+// Ubica la forma <p:pic> nombrada `placeholderName` dentro de la slide en
+// `slidePath`, sobrescribe los bytes de su imagen con `dataUrl` (recodificada
+// al mismo mime que el slot original) y ajusta el alto del cuadro (<a:ext cy>)
+// al aspect ratio real de la imagen nueva — solo limita que CREZCA demasiado
+// respecto al original (para no montarse sobre otros elementos fijos de la
+// lámina); que quede más flaco no tiene ese riesgo, así que no se le pone piso.
+// Devuelve true si encontró y reemplazó el placeholder, false si no existe
+// en esa slide (no es error — cada slide solo tiene algunos placeholders).
+let _irSlideHeightCache = null;
+async function irGetSlideHeight(zip) {
+  if (_irSlideHeightCache !== null) return _irSlideHeightCache;
+  try {
+    const presXml = await zip.file('ppt/presentation.xml').async('string');
+    const m = presXml.match(/<p:sldSz[^>]*cy="(\d+)"/);
+    _irSlideHeightCache = m ? parseInt(m[1], 10) : null;
+  } catch (e) {
+    _irSlideHeightCache = null;
+  }
+  return _irSlideHeightCache;
+}
+
+async function irSwapPlaceholderImage(zip, slidePath, placeholderName, dataUrl) {
+  if (!dataUrl) return false;
+  let xml = await zip.file(slidePath).async('string');
+  const nameIdx = xml.indexOf(`name="${placeholderName}"`);
+  if (nameIdx < 0) return false;
+
+  const picStart = xml.lastIndexOf('<p:pic>', nameIdx);
+  const picEndTag = '</p:pic>';
+  const picEnd = xml.indexOf(picEndTag, nameIdx) + picEndTag.length;
+  if (picStart < 0 || picEnd < 0) return false;
+  let picBlock = xml.slice(picStart, picEnd);
+
+  // Quitar cualquier <a:srcRect/> heredado del placeholder original: define
+  // qué parte de ESA imagen se mostraba (ej. recortar un 12% del borde
+  // inferior de la imagen de referencia de GA) y no tiene sentido aplicado
+  // a la imagen nueva — si no se quita, la imagen nueva queda recortada
+  // igual que la vieja, cortando contenido real (ej. la última pregunta).
+  picBlock = picBlock.replace(/<a:srcRect[^/]*\/>/, '');
+
+  const blipMatch = picBlock.match(/<a:blip r:embed="(rId\d+)"/);
+  if (!blipMatch) return false;
+  const rId = blipMatch[1];
+
+  const relsPath = slidePath.replace(/^ppt\/slides\/(slide\d+\.xml)$/, 'ppt/slides/_rels/$1.rels');
+  const relsFile = zip.file(relsPath);
+  if (!relsFile) return false;
+  const relsXml = await relsFile.async('string');
+  const targetMatch = relsXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
+  if (!targetMatch) return false;
+  const mediaPath = irResolveRelPath(slidePath, targetMatch[1]);
+
+  const mime = irMimeForPath(mediaPath);
+  const { bytes, width, height } = await irConvertImageDataUrl(dataUrl, mime);
+  zip.file(mediaPath, bytes);
+
+  const extMatch = picBlock.match(/<a:ext cx="(\d+)" cy="(\d+)"\/>/);
+  const offMatch = picBlock.match(/<a:off x="(-?\d+)" y="(-?\d+)"\/>/);
+  if (extMatch && offMatch && width && height) {
+    const cx = parseInt(extMatch[1], 10);
+    const origCy = parseInt(extMatch[2], 10);
+    const offX = parseInt(offMatch[1], 10);
+    const offY = parseInt(offMatch[2], 10);
+    const aspectCy = Math.round(cx * (height / width));
+    let newCx = cx;
+    let newCy = Math.min(aspectCy, Math.round(origCy * 1.2));
+
+    // Tope duro: que el borde inferior de la imagen no se pase del borde de
+    // la lámina (con margen para la barra decorativa del pie) — si no, un
+    // gráfico con muchas filas (ej. Engagement con 9 preguntas) puede quedar
+    // con contenido literalmente fuera de la lámina, invisible. Si hace
+    // falta, se achica ancho Y alto en la misma proporción (no solo el
+    // alto) para no distorsionar el gráfico, y se recentra horizontalmente.
+    const slideH = await irGetSlideHeight(zip);
+    const footerMargin = 300000; // ~0.33in
+    const maxCyBySlide = slideH ? Math.max(100000, slideH - offY - footerMargin) : Infinity;
+    if (newCy > maxCyBySlide) {
+      const scale = maxCyBySlide / newCy;
+      newCy = Math.round(newCy * scale);
+      newCx = Math.round(newCx * scale);
+    }
+    const newOffX = offX + Math.round((cx - newCx) / 2);
+
+    picBlock = picBlock
+      .replace(`<a:off x="${offMatch[1]}" y="${offMatch[2]}"/>`, `<a:off x="${newOffX}" y="${offY}"/>`)
+      .replace(`<a:ext cx="${extMatch[1]}" cy="${extMatch[2]}"/>`, `<a:ext cx="${newCx}" cy="${newCy}"/>`);
+  }
+  // Escribir siempre de vuelta (al menos el srcRect ya se sacó arriba, haya
+  // o no podido hacerse el ajuste de tamaño).
+  xml = xml.slice(0, picStart) + picBlock + xml.slice(picEnd);
+  zip.file(slidePath, xml);
+  return true;
+}
+
+async function irApplyImages(zip, slidePaths, images) {
   for (const path of slidePaths) {
-    let xml = await zip.file(path).async('string');
-    let xmlChanged = false;
     for (const [placeholderName, dataUrl] of Object.entries(images)) {
-      if (!dataUrl) continue;
-      const nameIdx = xml.indexOf(`name="${placeholderName}"`);
-      if (nameIdx < 0) continue;
+      await irSwapPlaceholderImage(zip, path, placeholderName, dataUrl);
+    }
+  }
+}
 
-      // Bloque <p:pic>...</p:pic> que contiene esta forma (para acotar el
-      // ajuste de <a:ext> solo a esta imagen, no a otras del mismo slide).
-      const picStart = xml.lastIndexOf('<p:pic>', nameIdx);
-      const picEndTag = '</p:pic>';
-      const picEnd = xml.indexOf(picEndTag, nameIdx) + picEndTag.length;
-      if (picStart < 0 || picEnd < 0) continue;
-      const picBlock = xml.slice(picStart, picEnd);
+// ── Duplicación de láminas (Resultados por Dimensión, Ranking Criticidad…) ──
+// Una lámina "maestra" de la plantilla (identificada por un placeholder de
+// imagen que solo ella tiene, ej. PH_CHART_DIMENSION) se reemplaza por N
+// copias — una por cada elemento de `items` — cada una con sus propios
+// tokens/imágenes vía fillFn(item, index). Las copias quedan en el mismo
+// lugar del orden de láminas que ocupaba la maestra.
+function irMaxMatch(re, xml) {
+  let max = 0, m;
+  re.lastIndex = 0;
+  while ((m = re.exec(xml))) max = Math.max(max, parseInt(m[1], 10));
+  return max;
+}
+function irMaxSlideNum(zip) {
+  let max = 0;
+  irSlidePaths(zip).forEach(p => {
+    max = Math.max(max, parseInt(p.match(/slide(\d+)\.xml$/)[1], 10));
+  });
+  return max;
+}
+async function irFindSlideByPlaceholder(zip, placeholderName) {
+  for (const path of irSlidePaths(zip)) {
+    const xml = await zip.file(path).async('string');
+    if (xml.includes(`name="${placeholderName}"`)) return path;
+  }
+  return null;
+}
 
-      const blipMatch = picBlock.match(/<a:blip r:embed="(rId\d+)"/);
-      if (!blipMatch) continue;
-      const rId = blipMatch[1];
+async function irExpandSlide(zip, masterPlaceholder, items, fillFn) {
+  if (!items.length) return 0;
+  const masterPath = await irFindSlideByPlaceholder(zip, masterPlaceholder);
+  if (!masterPath) return 0; // La plantilla no trae esta lámina — se omite sin error.
+  const masterSlideNum = parseInt(masterPath.match(/slide(\d+)\.xml$/)[1], 10);
+  const masterRelsPath = `ppt/slides/_rels/slide${masterSlideNum}.xml.rels`;
+  const masterXml = await zip.file(masterPath).async('string');
+  const masterRelsFile = zip.file(masterRelsPath);
+  const masterRelsXml = masterRelsFile ? await masterRelsFile.async('string') : null;
 
-      const relsPath = path.replace(/^ppt\/slides\/(slide\d+\.xml)$/, 'ppt/slides/_rels/$1.rels');
-      const relsFile = zip.file(relsPath);
-      if (!relsFile) continue;
-      const relsXml = await relsFile.async('string');
-      const targetMatch = relsXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
-      if (!targetMatch) continue;
-      const mediaPath = irResolveRelPath(path, targetMatch[1]);
+  const presPath = 'ppt/presentation.xml';
+  const presRelsPath = 'ppt/_rels/presentation.xml.rels';
+  const ctPath = '[Content_Types].xml';
+  let presXml = await zip.file(presPath).async('string');
+  let presRelsXml = await zip.file(presRelsPath).async('string');
+  let ctXml = await zip.file(ctPath).async('string');
 
-      const mime = irMimeForPath(mediaPath);
-      const { bytes, width, height } = await irConvertImageDataUrl(dataUrl, mime);
-      zip.file(mediaPath, bytes);
+  const relIdMatch = presRelsXml.match(new RegExp(`Id="(rId\\d+)"[^>]*Target="slides/slide${masterSlideNum}\\.xml"`));
+  if (!relIdMatch) return 0;
+  const masterRid = relIdMatch[1];
+  const sldIdRe = new RegExp(`<p:sldId id="\\d+" r:id="${masterRid}"/>`);
+  const sldIdMatch = presXml.match(sldIdRe);
+  if (!sldIdMatch) return 0;
 
-      const extMatch = picBlock.match(/<a:ext cx="(\d+)" cy="(\d+)"\/>/);
-      if (extMatch && width && height) {
-        const cx = parseInt(extMatch[1], 10);
-        const origCy = parseInt(extMatch[2], 10);
-        // Ajustar el alto al aspect ratio real de la imagen nueva. Solo se
-        // limita que CREZCA demasiado respecto al original (si no, un
-        // gráfico más alto —ej. con leyenda— puede montarse sobre otros
-        // elementos fijos de la lámina); que quede más flaco/bajo que el
-        // original no tiene ese riesgo, así que no se le pone piso.
-        const aspectCy = Math.round(cx * (height / width));
-        const newCy = Math.min(aspectCy, Math.round(origCy * 1.2));
-        const newPicBlock = picBlock.replace(
-          `<a:ext cx="${extMatch[1]}" cy="${extMatch[2]}"/>`,
-          `<a:ext cx="${cx}" cy="${newCy}"/>`
+  let nextSlideNum = irMaxSlideNum(zip) + 1;
+  let nextRelId   = irMaxMatch(/Id="rId(\d+)"/g, presRelsXml) + 1;
+  let nextSldId   = Math.max(irMaxMatch(/<p:sldId id="(\d+)"/g, presXml), 255) + 1;
+
+  const newSldIdEntries = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const n = nextSlideNum++;
+    const newSlidePath = `ppt/slides/slide${n}.xml`;
+    const newRelsPath  = `ppt/slides/_rels/slide${n}.xml.rels`;
+
+    const { tokens, images } = await fillFn(items[i], i);
+    let slideXml = masterXml.replace(/\{\{(\w+)\}\}/g, (m, key) =>
+      (key in (tokens || {})) ? irEscXml(tokens[key]) : m);
+
+    // Cada copia necesita su PROPIA media para cada imagen que se va a
+    // reemplazar — si no, todas comparten (y se pisan) el mismo archivo.
+    let relsXml = masterRelsXml;
+    if (relsXml && images) {
+      for (const placeholderName of Object.keys(images)) {
+        const nameIdx = slideXml.indexOf(`name="${placeholderName}"`);
+        if (nameIdx < 0) continue;
+        const picStart = slideXml.lastIndexOf('<p:pic>', nameIdx);
+        const picEnd = slideXml.indexOf('</p:pic>', nameIdx) + '</p:pic>'.length;
+        const blipMatch = slideXml.slice(picStart, picEnd).match(/<a:blip r:embed="(rId\d+)"/);
+        if (!blipMatch) continue;
+        const oldRid = blipMatch[1];
+        const targetMatch = relsXml.match(new RegExp(`Id="${oldRid}"[^>]*Target="([^"]+)"`));
+        if (!targetMatch) continue;
+        const oldMediaPath = irResolveRelPath(masterPath, targetMatch[1]);
+        const ext = oldMediaPath.split('.').pop();
+        const newMediaPath = `ppt/media/ph_${n}_${placeholderName.toLowerCase()}.${ext}`;
+        const masterMediaFile = zip.file(oldMediaPath);
+        if (masterMediaFile) zip.file(newMediaPath, await masterMediaFile.async('uint8array'));
+        relsXml = relsXml.replace(
+          new RegExp(`(Id="${oldRid}"[^>]*Target=")[^"]+(")`),
+          `$1../media/ph_${n}_${placeholderName.toLowerCase()}.${ext}$2`
         );
-        xml = xml.slice(0, picStart) + newPicBlock + xml.slice(picEnd);
-        xmlChanged = true;
       }
     }
-    if (xmlChanged) zip.file(path, xml);
+
+    zip.file(newSlidePath, slideXml);
+    if (relsXml) zip.file(newRelsPath, relsXml);
+
+    ctXml = ctXml.replace('</Types>',
+      `<Override PartName="/ppt/slides/slide${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>`);
+
+    const rid = `rId${nextRelId++}`;
+    presRelsXml = presRelsXml.replace('</Relationships>',
+      `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${n}.xml"/></Relationships>`);
+
+    newSldIdEntries.push(`<p:sldId id="${nextSldId++}" r:id="${rid}"/>`);
+
+    if (images) {
+      for (const [placeholderName, dataUrl] of Object.entries(images)) {
+        await irSwapPlaceholderImage(zip, newSlidePath, placeholderName, dataUrl);
+      }
+    }
   }
+
+  presXml = presXml.replace(sldIdMatch[0], newSldIdEntries.join(''));
+  // Quitar también la relación de la maestra (si no, queda una referencia
+  // rota a un archivo que se borra más abajo).
+  presRelsXml = presRelsXml.replace(
+    new RegExp(`<Relationship Id="${masterRid}"[^>]*Target="slides/slide${masterSlideNum}\\.xml"/>`),
+    ''
+  );
+  ctXml = ctXml.replace(
+    `<Override PartName="/ppt/slides/slide${masterSlideNum}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
+    ''
+  );
+  zip.file(presPath, presXml);
+  zip.file(presRelsPath, presRelsXml);
+  zip.file(ctPath, ctXml);
+
+  // La maestra original queda huérfana (ya reemplazada por sus copias) —
+  // se elimina para no dejarla flotando sin referenciar en el paquete.
+  zip.remove(masterPath);
+  if (masterRelsXml) zip.remove(masterRelsPath);
+
+  return items.length;
+}
+
+async function irBuildFromTemplate(tokens, images, expandFn) {
+  _irSlideHeightCache = null;
+  const zip = await JSZip.loadAsync(IR.templateBuffer);
+  const slidePaths = irSlidePaths(zip);
+
+  await irApplyTokens(zip, slidePaths, tokens);
+  await irApplyImages(zip, slidePaths, images);
+
+  if (expandFn) await expandFn(zip);
 
   return zip.generateAsync({
     type: 'blob',
@@ -11058,12 +11258,21 @@ async function irCaptureRcpChart(defId, med, opts) {
     const alturaEl = document.getElementById('rcp_altura');
     if (alturaEl) alturaEl.value = opts.altura;
   }
+  // Selección de dimensión (para 'grafico_por_pregunta' — Resultados por Dimensión).
+  if (opts.dim) {
+    const dimEl = document.getElementById('rcp_dim');
+    if (dimEl) dimEl.value = opts.dim;
+  }
   rcpGenerate();
   await new Promise(r => setTimeout(r, 400));
+  // rcpGenerate() puede terminar en un alert()+return sin crear gráfico (ej.
+  // dimensión sin datos en esta base/segmento) — RCP.chart queda null y no
+  // hay que confundir el canvas (que puede seguir mostrando el gráfico
+  // anterior) con uno recién generado. Se devuelve null y esa lámina
+  // simplemente no se reemplaza, en vez de cortar todo el informe.
+  if (!RCP.chart) return null;
   const canvas = document.getElementById('rcp-canvas');
-  if (!canvas || !canvas.width || !canvas.height) {
-    throw new Error(`No se pudo generar el gráfico "${defId}" (¿faltan columnas en la base?).`);
-  }
+  if (!canvas || !canvas.width || !canvas.height) return null;
   return canvas.toDataURL('image/png');
 }
 
@@ -11151,6 +11360,18 @@ async function irGenerate() {
         PH_CHART_ENPS: imgEnps,
         PH_CHART_OPTIMO_CRITICO: imgOptimoCritico,
       };
+
+      // Resultados por Dimensión: un "Gráfico por Pregunta" por cada palanca
+      // de R_DIMS (incluye Engagement y Agotamiento) — se capturan todos acá,
+      // mientras el contenedor de Gráficos sigue visible, y se insertan
+      // después (fase de armado del zip) duplicando la lámina maestra.
+      statusEl.textContent = 'Generando Resultados por Dimensión...';
+      const dimItems = [];
+      for (const dim of R_DIMS) {
+        const img = await irCaptureRcpChart('grafico_por_pregunta', med, { dim: dim.nombre });
+        if (img) dimItems.push({ dim, img });
+      }
+      IR._dimItems = dimItems; // usado por expandFn más abajo
     } finally {
       rGoSub('informe');
     }
@@ -11160,13 +11381,20 @@ async function irGenerate() {
       PH_LOGO_CLIENTE: logoData,
       PH_FOTO_PORTADA: coverPhotoData,
       ...chartImages,
+    }, async (zip) => {
+      const n = await irExpandSlide(zip, 'PH_CHART_DIMENSION', IR._dimItems, (item) => ({
+        tokens: {},
+        images: { PH_CHART_DIMENSION: item.img },
+      }));
+      if (n) statusEl.textContent = `Insertando ${n} láminas de Resultados por Dimensión...`;
     });
     barEl.style.width = '90%';
 
     const fname = `Informe_Resultados_${cliente.replace(/[^a-zA-Z0-9_-]+/g, '_')}.pptx`;
     irDownloadBlob(blob, fname);
     barEl.style.width = '100%';
-    statusEl.textContent = `✓ Informe generado (${fname}) — portada, Aplicación de la Encuesta, Engagement/Agotamiento, 4 Segmentos, Recursos y Demandas, eNPS y Óptimo vs Crítico. Resultados por Dimensión y Ranking Criticidad vienen en los próximos pasos.`;
+    const dimCount = (IR._dimItems || []).length;
+    statusEl.textContent = `✓ Informe generado (${fname}) — portada, Aplicación de la Encuesta, Engagement/Agotamiento, 4 Segmentos, Recursos y Demandas, eNPS, Óptimo vs Crítico${dimCount ? ` y ${dimCount} láminas de Resultados por Dimensión` : ''}. Ranking Criticidad + Clasificación viene en el próximo paso.`;
   } catch (err) {
     console.error('[IR] Error:', err);
     statusEl.textContent = 'Error al generar el informe. Revisa la consola.';

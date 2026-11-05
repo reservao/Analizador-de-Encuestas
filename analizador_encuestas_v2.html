@@ -5483,15 +5483,28 @@ const RCP_COLORS = {
 function rcpNorm(s) { return normalize(s); }
 // RCP_COL_ALIASES ya está definido arriba junto a RCP_COLORS (versión expandida)
 
+// Busca el ÚLTIMO índice que cumple el predicado, no el primero. Bases "Consolidado"
+// que juntan varias mediciones a lo ancho (ítems repetidos con el mismo encabezado,
+// una vez por año) suelen traer el bloque más reciente al final — usar el primer
+// match deja el cálculo pegado a una medición vieja. Confirmado en un caso real:
+// el encabezado de un ítem WE estaba duplicado (medición vieja + nueva, mismo texto),
+// y solo el bloque final coincidía con las columnas de dimensión ya calculadas por
+// la plataforma (Vigor/Dedicación/Absorción) — tomar el primer match inflaba el %
+// de Alto Engagement varios puntos respecto a lo que muestra la plataforma origen.
+function findLastIndex(arr, pred) {
+  for (let i = arr.length - 1; i >= 0; i--) { if (pred(arr[i], i)) return i; }
+  return -1;
+}
+
 function colAliasLookup(nc, headers, normFn) {
-  var idx = headers.findIndex(function(h) {
+  var idx = findLastIndex(headers, function(h) {
     return normFn(h).replace(/[()]/g,'').split('-')[0].trim().replace(/_/g,'') === nc;
   });
   if(idx>=0) return idx;
   var colKey = Object.keys(RCP_COL_ALIASES).find(function(k){ return normFn(k).replace(/_/g,'')===nc; });
   var aliases = colKey ? RCP_COL_ALIASES[colKey] : [];
   if(aliases.length) {
-    idx = headers.findIndex(function(h) {
+    idx = findLastIndex(headers, function(h) {
       var nh = normFn(h).replace(/_/g,'').replace(/[()]/g,'');
       return aliases.some(function(a){
         var na = normFn(a).replace(/_/g,'');
@@ -5503,7 +5516,7 @@ function colAliasLookup(nc, headers, normFn) {
 }
 
 function rcpColIdx(col) {
-  return RCP.headers.findIndex(h => h===col || rcpNorm(h)===rcpNorm(col));
+  return findLastIndex(RCP.headers, h => h===col || rcpNorm(h)===rcpNorm(col));
 }
 
 function rcpColIdxFuzzy(col) {
@@ -5520,7 +5533,7 @@ function rcpColIdxFuzzy(col) {
   // promedio de una dimensión, salvo que la búsqueda misma sea explícitamente por eso
   // — mismo bug que en rColIdx (R): "dedicationbinary".startsWith("dedication").
   var queryWantsBinary = /binary|bynary|binario/i.test(nc);
-  return RCP.headers.findIndex(h => {
+  return findLastIndex(RCP.headers, h => {
     if (!h) return false;
     var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
     if (!queryWantsBinary && /binary|bynary|binario/i.test(nh)) return false;
@@ -5613,7 +5626,11 @@ function rcpRowsByMed(med) {
 // resto de la app: Vigor+Dedicación+Absorción ≥5 simultáneamente para Alto Engagement,
 // promedio EX1-EX4 ≥3.25 para Alto Agotamiento. Devuelve las FILAS de cada cuadrante
 // (no solo el conteo), para poder calcular cualquier otro promedio sobre cada grupo.
-function rcpCuadrante4SegGroups(rows) {
+// Contexto compartido (índices de columnas) para calcular Alto Engagement / Alto
+// Agotamiento por persona — usado tanto por el cuadrante de 4 Segmentos como por
+// el % mostrado en "Niveles de Engagement/Agotamiento", para que ambos apliquen
+// EXACTAMENTE la misma regla de quién cuenta como respondiente completo.
+function rcpEngAgoCtx() {
   const engBinIdx = rcpColIdxFuzzy('ALTO_ENGAGEMENT');
   const agoBinIdx = (() => { const i = rcpColIdxFuzzy('EXHAUSTED_BYNARY'); return i >= 0 ? i : rcpColIdxFuzzy('ALTO_AGOTAMIENTO'); })();
   const weGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
@@ -5621,28 +5638,39 @@ function rcpCuadrante4SegGroups(rows) {
   const hasWEFallback = weIdxs.every(g => g.length);
   const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
   const hasEXFallback = exIdxs.length > 0;
+  return { engBinIdx, agoBinIdx, weIdxs, hasWEFallback, exIdxs, hasEXFallback };
+}
 
+// engFlag/agoFlag quedan en null cuando la persona no respondió esa dimensión
+// (sin columna binaria pre-calculada Y sin ítems suficientes para el fallback).
+function rcpEngAgoFlags(row, ctx) {
+  let engFlag = null, agoFlag = null;
+  if (ctx.engBinIdx >= 0) {
+    const v = parseFloat(row[ctx.engBinIdx]);
+    if (!isNaN(v)) engFlag = v === 1 ? 1 : 0;
+  }
+  if (engFlag === null && ctx.hasWEFallback) {
+    engFlag = ctx.weIdxs.every(idxs => {
+      const vs = idxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
+      return vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 5;
+    }) ? 1 : 0;
+  }
+  if (ctx.agoBinIdx >= 0) {
+    const v = parseFloat(row[ctx.agoBinIdx]);
+    if (!isNaN(v)) agoFlag = v === 1 ? 1 : 0;
+  }
+  if (agoFlag === null && ctx.hasEXFallback) {
+    const vs = ctx.exIdxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
+    agoFlag = (vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 3.25) ? 1 : 0;
+  }
+  return { engFlag, agoFlag };
+}
+
+function rcpCuadrante4SegGroups(rows) {
+  const ctx = rcpEngAgoCtx();
   const groups = { comprometidos: [], engagement: [], agotados: [], zonaGris: [] };
   for (const row of rows) {
-    let engFlag = null, agoFlag = null;
-    if (engBinIdx >= 0) {
-      const v = parseFloat(row[engBinIdx]);
-      if (!isNaN(v)) engFlag = v === 1 ? 1 : 0;
-    }
-    if (engFlag === null && hasWEFallback) {
-      engFlag = weIdxs.every(idxs => {
-        const vs = idxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
-        return vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 5;
-      }) ? 1 : 0;
-    }
-    if (agoBinIdx >= 0) {
-      const v = parseFloat(row[agoBinIdx]);
-      if (!isNaN(v)) agoFlag = v === 1 ? 1 : 0;
-    }
-    if (agoFlag === null && hasEXFallback) {
-      const vs = exIdxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
-      agoFlag = (vs.length && vs.reduce((a,b) => a+b, 0)/vs.length >= 3.25) ? 1 : 0;
-    }
+    const { engFlag, agoFlag } = rcpEngAgoFlags(row, ctx);
     if (engFlag === null || agoFlag === null) continue;
     if (engFlag && agoFlag) groups.comprometidos.push(row);
     else if (engFlag && !agoFlag) groups.engagement.push(row);
@@ -6595,6 +6623,22 @@ function rcpGenerate() {
       });
     }
 
+    // Solo cuentan las personas que respondieron AMBAS dimensiones (Engagement y
+    // Agotamiento) — misma regla que el cuadrante de "4 Segmentos", para que N,
+    // promedio y % cuadren siempre entre ambos gráficos. Si la otra dimensión no
+    // existe en absoluto en la base, no se exige (no hay "respuesta vacía" de algo
+    // que no se midió).
+    const flagCtx = rcpEngAgoCtx();
+    const otherAvailable = isEng
+      ? (flagCtx.agoBinIdx >= 0 || flagCtx.hasEXFallback)
+      : (flagCtx.engBinIdx >= 0 || flagCtx.hasWEFallback);
+    if (otherAvailable) {
+      chartRowGroups = chartRowGroups.map(rows => rows.filter(r => {
+        const { engFlag, agoFlag } = rcpEngAgoFlags(r, flagCtx);
+        return engFlag !== null && agoFlag !== null;
+      }));
+    }
+
     // Apply hideLow filter
     if(hideLow && nmin > 0) {
       const kept = chartLabels.reduce((acc, lbl, i) => {
@@ -6630,40 +6674,14 @@ function rcpGenerate() {
       return rcpDimMean(rows, mainCol, itemsMap[mainCol]||[]);
     });
 
-    // Compute binary %
-    // Prioridad: para agotamiento, EXHAUSTED_BYNARY si existe, si no ALTO_AGOTAMIENTO (y variantes)
-    const binIdxResolved = isEng
-      ? rcpColIdxFuzzy('ALTO_ENGAGEMENT')
-      : (() => { const i = rcpColIdxFuzzy('EXHAUSTED_BYNARY'); return i>=0 ? i : rcpColIdxFuzzy('ALTO_AGOTAMIENTO'); })();
+    // Compute binary % — chartRowGroups ya viene filtrado arriba a solo respondentes
+    // completos (ambas dimensiones), así que acá basta con el flag individual.
     const binaryPct = chartRowGroups.map((rows, i) => {
       if(nmin > 0 && rows.length < nmin) return null;
-      const bIdx = binIdxResolved;
-      if(bIdx >= 0) {
-        const vals = rows.map(r=>parseFloat(r[bIdx])).filter(v=>!isNaN(v));
-        if(vals.length) return +(vals.reduce((a,b)=>a+b,0)/vals.length*100).toFixed(1);
-      }
-      // Per-person fallback (sin columna binaria pre-calculada)
-      if (isEng) {
-        // Alto Engagement: Vigor, Dedicación y Absorción promedian >=5 CADA UNA, simultáneamente
-        // (NO el promedio general de los 9 ítems >=4.5, que sobreestima el %)
-        const subGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
-        const subIdxs = subGroups.map(g => g.map(c => rcpItemIdx(c)).filter(i => i >= 0));
-        if (!subIdxs.every(g => g.length) || !rows.length) return null;
-        const count = rows.filter(r => subIdxs.every(idxs => {
-          const vs = idxs.map(i => parseFloat(r[i])).filter(v => !isNaN(v));
-          return vs.length && vs.reduce((a,b)=>a+b,0)/vs.length >= 5;
-        })).length;
-        return +(count/rows.length*100).toFixed(1);
-      } else {
-        // Alto Agotamiento: promedio EX1-EX4 >= 3.25
-        const exIdxs = ['EX1','EX2','EX3','EX4'].map(c => rcpItemIdx(c)).filter(i => i >= 0);
-        if (!exIdxs.length || !rows.length) return null;
-        const count = rows.filter(r => {
-          const vs = exIdxs.map(i => parseFloat(r[i])).filter(v => !isNaN(v));
-          return vs.length && vs.reduce((a,b)=>a+b,0)/vs.length >= 3.25;
-        }).length;
-        return +(count/rows.length*100).toFixed(1);
-      }
+      if (!rows.length) return null;
+      const flags = rows.map(r => rcpEngAgoFlags(r, flagCtx));
+      const count = flags.filter(f => (isEng ? f.engFlag : f.agoFlag) === 1).length;
+      return +(count/rows.length*100).toFixed(1);
     });
 
     // Resize canvas

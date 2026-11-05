@@ -5450,7 +5450,7 @@ const RCP_COL_ALIASES = {
   'ABSORTION':        ['absortion','absorption','absorcion','promedio_absorcion','promedio absorcion'],
   'VIGOR_BINARY':     ['vigorbinary','altovigor','alto_vigor','alto vigor','high_vigor'],
   'EXHAUSTED_BYNARY': ['exhaustedbynary','exhaustedbinary','exhausted_binary','high_exhaustion','highexhaustion'],
-  'ALTO_ENGAGEMENT':  ['altoengagement','alto_engagement','alto engagement','altoeng','alto_eng','alto eng','engagementbinary','engagement_binary','high_engagement','highengagement'],
+  'ALTO_ENGAGEMENT':  ['altoengagement','alto_engagement','alto engagement','altoeng','alto_eng','alto eng','engagementbinary','engagement_binary','high_engagement','highengagement','engagementproportion','engagement_proportion','engagement proportion'],
   'ALTO_AGOTAMIENTO': ['altoagotamiento','alto_agotamiento','alto agotamiento','altoagot','alto_agot','alto agot','agotamientobinary','agotamiento_binary','high_agotamiento','highagotamiento'],
   'SELF_EFFICACY':    ['selfefficacy','autoeficacia','auto_eficacia','promedio_autoeficacia','promedio autoeficacia'],
   'OPTIMISM':         ['optimism','optimismo','promedio_optimismo','promedio optimismo'],
@@ -8925,7 +8925,7 @@ function rSubDimMean(rows, sub) {
 
 function rCalcAltoEng(rows) {
   // Use ALTO_ENGAGEMENT column (all 3 sub-dims ≥ 5), NOT VIGOR_BINARY (only vigor ≥ 5)
-  const binIdx = R.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement)$/i.test(rNorm(h).replace(/\s/g,'')));
+  const binIdx = R.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(rNorm(h).replace(/\s/g,'')));
   if (binIdx >= 0) {
     const count = rows.filter(r => parseFloat(r[binIdx]) === 1).length;
     return rows.length ? Math.round(count / rows.length * 100) : null;
@@ -9846,7 +9846,7 @@ function ropCalcEng(rows) {
   // que solo mide vigor y sobreestima). Si no existe, calcula per-persona:
   // Vigor, Dedicación y Absorción promedian >= 5 simultáneamente.
   let pct = null;
-  const binIdx = ROP.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement)$/i.test(norm(h).replace(/[_\s]/g,'')));
+  const binIdx = ROP.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(norm(h).replace(/[_\s]/g,'')));
   if (binIdx >= 0) {
     const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;

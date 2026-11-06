@@ -1151,6 +1151,7 @@ tr:hover td { background: var(--bg); }
                 </div>
                 <div id="rcp-table-wrap" style="display:none;width:100%;overflow-x:auto;padding-bottom:12px"></div>
                 <div id="rcp-extra-wrap" style="display:none;width:100%"></div>
+                <div id="rcp-varpanel" style="display:none;width:100%"></div>
               </div>
             </div>
           </div>
@@ -5273,7 +5274,7 @@ function rcLoadFile(e) {
 }
 
 // ─── PREDETERMINADOS ───────────────────────────────────────────────────────
-let RCP = { headers:[], rows:[], filename:'', mediciones:[], chart:null, currentDef:null, fontScale:1 };
+let RCP = { headers:[], rows:[], filename:'', mediciones:[], chart:null, currentDef:null, fontScale:1, colOverrides:{} };
 
 // Multiplicador de tamaño de letra — controlado por el usuario (selector "Tamaño de
 // letra" en el panel de Exportación, abajo de los parámetros de cada gráfico). Se
@@ -5543,6 +5544,16 @@ function rcpColIdx(col) {
 }
 
 function rcpColIdxFuzzy(col) {
+  // Override manual del usuario (panel "Columnas detectadas") — tiene prioridad
+  // absoluta sobre cualquier detección automática. Clave = el mismo string que
+  // se busca (ej. 'WORK_ENGAGEMENT', 'ALTO_ENGAGEMENT', 'WE1'), así que cualquier
+  // llamada a rcpColIdxFuzzy/rcpItemIdx con esa clave queda forzada.
+  if (RCP.colOverrides && Object.prototype.hasOwnProperty.call(RCP.colOverrides, col)) {
+    var forced = RCP.colOverrides[col];
+    if (!forced) return -1; // '' = "no usar ninguna columna" explícito
+    var fIdx = RCP.headers.indexOf(forced);
+    if (fIdx >= 0) return fIdx;
+  }
   // Nivel 1: exacto
   var idx = rcpColIdx(col);
   if (idx >= 0) return idx;
@@ -6588,9 +6599,107 @@ function rcpGetParam(id) {
   return checked.length ? checked : null;
 }
 
+// ── "Columnas detectadas" — panel de transparencia/override manual ─────────
+// Por cada gráfico, muestra qué columna de la base se está usando para cada
+// variable clave y permite forzarla manualmente (ver RCP.colOverrides, leído
+// dentro de rcpColIdxFuzzy). Pensado como mitigación preventiva: si la
+// detección automática se equivoca de columna (ya pasó 2 veces en esta
+// sesión con bases reales), el usuario lo puede corregir ahí mismo sin
+// depender de que se reporte el bug y se arregle en el código.
+const RCP_VAR_DEFS = {
+  WORK_ENGAGEMENT: [
+    { key:'WORK_ENGAGEMENT', label:'Engagement (promedio)' },
+    { key:'ALTO_ENGAGEMENT', label:'Alto Engagement (binario)', flag:'eng' },
+  ],
+  EXHAUSTION: [
+    { key:'EXHAUSTION', label:'Agotamiento (promedio)' },
+    { key:'EXHAUSTED_BYNARY', label:'Alto Agotamiento (binario)', flag:'ago' },
+  ],
+  SELF_EFFICACY: [{ key:'SELF_EFFICACY', label:'Autoeficacia (promedio)' }],
+  OPTIMISM:      [{ key:'OPTIMISM',      label:'Optimismo (promedio)' }],
+};
+
+function rcpVarPanelItems(def) {
+  const seen = new Set(), items = [];
+  (def.requiere || []).forEach(req => {
+    (RCP_VAR_DEFS[req] || []).forEach(it => {
+      if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }
+    });
+  });
+  return items;
+}
+
+// Describe de dónde sale el flag binario Alto Engagement/Agotamiento,
+// reusando exactamente la misma cadena de prioridad que el cálculo real
+// (rcpEngAgoCtx) para que el panel nunca mienta sobre qué se está usando.
+function rcpDescribeFlag(kind) {
+  const ctx = rcpEngAgoCtx();
+  if (kind === 'eng') {
+    if (ctx.engBinIdx >= 0) return { col: RCP.headers[ctx.engBinIdx] };
+    if (ctx.hasSubBinFallback) return { desc: 'calculado desde VIGOR_BINARY + DEDICATION_BINARY + ABSORTION_BINARY' };
+    if (ctx.hasWEFallback) return { desc: 'calculado desde ítems WE1-WE9 (Vigor/Dedicación/Absorción ≥5)' };
+    return { desc: 'no disponible en esta base' };
+  }
+  if (ctx.agoBinIdx >= 0) return { col: RCP.headers[ctx.agoBinIdx] };
+  if (ctx.hasEXFallback) return { desc: 'calculado desde ítems EX1-EX4 (promedio ≥3.25)' };
+  return { desc: 'no disponible en esta base' };
+}
+
+function rcpVarSelectHtml(key, selectedVal) {
+  const opts = ['<option value="">— detección automática —</option>'].concat(
+    RCP.headers.map(h => `<option value="${escHtml(h)}"${h===selectedVal?' selected':''}>${escHtml(h)}</option>`)
+  );
+  return `<select onchange="rcpSetColOverride('${key}', this.value)"
+    style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:260px">
+    ${opts.join('')}
+  </select>`;
+}
+
+function rcpRenderVarPanel(def) {
+  const container = document.getElementById('rcp-varpanel');
+  if (!container) return;
+  const items = rcpVarPanelItems(def);
+  if (!RCP.headers || !RCP.headers.length || !items.length) { container.innerHTML=''; container.style.display='none'; return; }
+  container.style.display = '';
+  const rows = items.map(it => {
+    let displayHtml;
+    const selectedVal = RCP.colOverrides[it.key] || '';
+    if (it.flag) {
+      const d = rcpDescribeFlag(it.flag);
+      displayHtml = d.col ? `<code>${escHtml(d.col)}</code>` : `<span style="color:var(--text2)">${escHtml(d.desc)}</span>`;
+    } else {
+      const idx = rcpColIdxFuzzy(it.key);
+      displayHtml = idx >= 0 ? `<code>${escHtml(RCP.headers[idx])}</code>` : `<span style="color:#B23B2E">no encontrada en esta base</span>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px;flex-wrap:wrap">
+      <span style="flex:0 0 190px;color:var(--text2)">${escHtml(it.label)}</span>
+      <span style="flex:1;min-width:140px">${displayHtml}</span>
+      ${rcpVarSelectHtml(it.key, selectedVal)}
+    </div>`;
+  }).join('');
+  container.innerHTML = `<details style="margin-top:10px">
+    <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">🔍 Columnas detectadas — click para revisar/editar</summary>
+    <div style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)">
+      <p style="margin:0 0 8px;font-size:11px;color:var(--text2)">
+        Si una variable está usando la columna equivocada, elígela manualmente acá — se aplica al instante,
+        sin tener que esperar un arreglo de código.
+      </p>
+      ${rows}
+    </div>
+  </details>`;
+}
+
+function rcpSetColOverride(key, value) {
+  if (value) RCP.colOverrides[key] = value;
+  else delete RCP.colOverrides[key];
+  rcpGenerate();
+}
+
 function rcpGenerate() {
   const def = RCP.currentDef;
   if(!def) return;
+
+  rcpRenderVarPanel(def);
 
   // Opciones de limpieza para exportación — aplican a cualquier tipo de gráfico
   const rcpHideTitle    = !!document.getElementById('rcp_hide_title')?.checked;

@@ -5106,8 +5106,8 @@ function rcGenerate() {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: !!title && !rcHideTitle, text: title, font:{size:rcpFs(14), weight:'bold'}, color:'#1A1916', padding:{bottom:16} },
-        legend: { position:'bottom', labels:{font:{size:rcpFs(11)}, padding:16} },
+        title: { display: !!title && !rcHideTitle, text: title, font:{size:rcpFsTitle(14), weight:'bold'}, color:'#1A1916', padding:{bottom:16} },
+        legend: { position:'bottom', labels:{font:{size:rcpFsAxis(11)}, padding:16} },
         tooltip: { callbacks: {
           label: ctx => {
             const v = ctx.raw;
@@ -5122,10 +5122,10 @@ function rcGenerate() {
         y: { title:{display:true, text:selVars[1]?.label||'Y'} }
       } : {
         x: { stacked: type==='bar100'||type==='column100',
-             ticks:{font:{size:rcpFs(10)}},
+             ticks:{font:{size:rcpFsAxis(10)}},
              grid:{display:false}, border:{display:false} },
         y: { stacked: type==='bar100'||type==='column100',
-             ticks:{font:{size:rcpFs(10)}},
+             ticks:{font:{size:rcpFsAxis(10)}},
              grid:{display:false}, border:{display:false},
              max: (type==='bar100'||type==='column100') ? 100 : undefined }
       },
@@ -5274,14 +5274,21 @@ function rcLoadFile(e) {
 }
 
 // ─── PREDETERMINADOS ───────────────────────────────────────────────────────
-let RCP = { headers:[], rows:[], filename:'', mediciones:[], chart:null, currentDef:null, fontScale:1, colOverrides:{} };
+let RCP = { headers:[], rows:[], filename:'', mediciones:[], chart:null, currentDef:null,
+  fontScale:{ title:1, axis:1, value:1 }, colOverrides:{} };
 
-// Multiplicador de tamaño de letra — controlado por el usuario (selector "Tamaño de
-// letra" en el panel de Exportación, abajo de los parámetros de cada gráfico). Se
-// aplica sobre CADA tamaño de fuente base (título, leyenda, ejes, etiquetas de valor
-// dibujadas a mano sobre el canvas) en todos los tipos de gráfico de RCP, para poder
-// agrandar/achicar el texto sin tocar el resto del layout.
-function rcpFs(n) { return Math.max(1, Math.round(n * (RCP.fontScale || 1))); }
+// Tres multiplicadores de tamaño de letra independientes — controlados por el
+// usuario (sliders "Título" / "Escala y ejes" / "Valores internos" en el panel
+// de Exportación, abajo de los parámetros de cada gráfico). Separados a pedido
+// del cliente: a veces se necesita agrandar solo el valor dentro de la barra
+// (ej. "4.33") sin tocar el tamaño del título ni el de los números del eje.
+// - Título: el nombre del gráfico (ej. "Niveles de Engagement").
+// - Escala y ejes: leyenda, ticks de los ejes X/Y, nombres de eje del cuadrante.
+// - Valores internos: todo lo que se dibuja DENTRO del gráfico mostrando un
+//   dato — valor de la barra, %, N=, pills, números de las 4 tiles del cuadrante.
+function rcpFsTitle(n) { return Math.max(1, Math.round(n * (RCP.fontScale?.title || 1))); }
+function rcpFsAxis(n)  { return Math.max(1, Math.round(n * (RCP.fontScale?.axis  || 1))); }
+function rcpFsValue(n) { return Math.max(1, Math.round(n * (RCP.fontScale?.value || 1))); }
 
 // Definición de los 7 gráficos predeterminados
 const RCP_DEFS = [
@@ -6067,7 +6074,16 @@ function renderRcpParams() {
   // Opciones de limpieza para exportación — aplican a cualquier tipo de gráfico
   const prevHideTitle = document.getElementById('rcp_hide_title')?.checked;
   const prevHideMed    = document.getElementById('rcp_hide_medlabel')?.checked;
-  const fontPct = Math.round((RCP.fontScale || 1) * 100);
+  const fsSlider = (cat, label) => {
+    const pct = Math.round((RCP.fontScale?.[cat] || 1) * 100);
+    return `<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-top:4px">
+        <span>${label}: <b id="rcp_font_scale_${cat}_pct">${pct}%</b></span>
+        <input type="range" id="rcp_font_scale_${cat}" min="60" max="200" step="5" value="${pct}"
+               oninput="document.getElementById('rcp_font_scale_${cat}_pct').textContent=this.value+'%'"
+               onchange="rcpFontScaleChanged('${cat}', this.value)"
+               style="width:100%;cursor:pointer;accent-color:var(--accent)">
+      </label>`;
+  };
   html += `<div style="margin-bottom:1rem;padding-top:6px;border-top:1px solid var(--border)">
     <div class="slbl" style="margin-top:8px">Exportación</div>
     <div style="display:flex;flex-direction:column;gap:6px">
@@ -6079,21 +6095,19 @@ function renderRcpParams() {
         <input type="checkbox" id="rcp_hide_medlabel" style="cursor:pointer;accent-color:var(--accent)"${prevHideMed?' checked':''}>
         Ocultar etiqueta de Medición
       </label>
-      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-top:4px">
-        <span>Tamaño de letra: <b id="rcp_font_scale_pct">${fontPct}%</b></span>
-        <input type="range" id="rcp_font_scale" min="60" max="200" step="5" value="${fontPct}"
-               oninput="document.getElementById('rcp_font_scale_pct').textContent=this.value+'%'"
-               onchange="rcpFontScaleChanged(this.value)"
-               style="width:100%;cursor:pointer;accent-color:var(--accent)">
-      </label>
+      <div style="font-size:11px;color:var(--text2);margin-top:6px">Tamaño de letra (independiente por tipo)</div>
+      ${fsSlider('title', 'Título del gráfico')}
+      ${fsSlider('axis',  'Escala y ejes (leyenda, ticks)')}
+      ${fsSlider('value', 'Valores internos (dato, %, N=)')}
     </div>
   </div>`;
 
   document.getElementById('rcp-params').innerHTML = html;
 }
 
-function rcpFontScaleChanged(val) {
-  RCP.fontScale = (parseFloat(val) || 100) / 100;
+function rcpFontScaleChanged(cat, val) {
+  if (!RCP.fontScale) RCP.fontScale = { title:1, axis:1, value:1 };
+  RCP.fontScale[cat] = (parseFloat(val) || 100) / 100;
   rcpGenerate();
 }
 
@@ -6938,8 +6952,8 @@ function rcpGenerate() {
         maintainAspectRatio: false,
         layout: { padding: { bottom: 30, left: 5, right: 20 } },
         plugins: {
-          title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { display: benchDatasets.length > 0, position:'bottom', labels:{font:{size:rcpFs(11)},padding:14} },
+          title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { display: benchDatasets.length > 0, position:'bottom', labels:{font:{size:rcpFsAxis(11)},padding:14} },
           tooltip: { callbacks: {
             label: ctx => {
               const n = nPerGroup[ctx.dataIndex];
@@ -6968,12 +6982,12 @@ function rcpGenerate() {
           y: {
             min: yMin, max: yMax,
             grid: { display:false }, border: { display:false },
-            ticks: { font:{size:rcpFs(10)}, stepSize: isEng ? 1 : 0.5 }
+            ticks: { font:{size:rcpFsAxis(10)}, stepSize: isEng ? 1 : 0.5 }
           },
           y2: {
             position: 'right', min: 0, max: 100,
             grid: { drawOnChartArea: false }, border: { display:false },
-            ticks: { font:{size:rcpFs(10)}, color: dotColor, callback: v => v+'%', stepSize: 20 }
+            ticks: { font:{size:rcpFsAxis(10)}, color: dotColor, callback: v => v+'%', stepSize: 20 }
           }
         },
         animation: { duration: 400, onComplete() { this.draw(); } }
@@ -6989,8 +7003,8 @@ function rcpGenerate() {
           var plugin  = chart.options.plugins.rcpFloatingDot;
           var meta    = chart.getDatasetMeta(0);
           var nBars   = meta.data.length;
-          var valFontSize = rcpFs(nBars > 15 ? 9 : (nBars > 8 ? 11 : 13));
-          var pillH   = rcpFs(nBars > 15 ? 16 : (nBars > 8 ? 19 : 22));
+          var valFontSize = rcpFsValue(nBars > 15 ? 9 : (nBars > 8 ? 11 : 13));
+          var pillH   = rcpFsValue(nBars > 15 ? 16 : (nBars > 8 ? 19 : 22));
           var pillPad = pillH * 0.55;
           ctx.save();
           for(var i=0; i<meta.data.length; i++) {
@@ -7002,7 +7016,7 @@ function rcpGenerate() {
             // N label below x-axis
             if(n !== null && n !== undefined) {
               ctx.fillStyle = 'rgba(80,80,80,0.75)';
-              ctx.font = rcpFs(9)+'px "DM Mono", monospace';
+              ctx.font = rcpFsValue(9)+'px "DM Mono", monospace';
               ctx.textAlign = 'center'; ctx.textBaseline = 'top';
               ctx.fillText('N='+n, bx, chartArea.bottom + 8);
             }
@@ -7010,7 +7024,7 @@ function rcpGenerate() {
             var barBottom = yScale.getPixelForValue(plugin.isEng ? 0 : 1);
             if(val === null || val === undefined) {
               ctx.save();
-              ctx.font = 'italic '+rcpFs(9)+'px "DM Sans", sans-serif';
+              ctx.font = 'italic '+rcpFsValue(9)+'px "DM Sans", sans-serif';
               ctx.fillStyle = '#aaa';
               ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
               ctx.translate(bx, (chartArea.top + barBottom) / 2);
@@ -7038,7 +7052,7 @@ function rcpGenerate() {
             var floorY = y2Scale.getPixelForValue(20);
             var dotCY  = Math.max(barTopY + pillH/2 + 2, Math.min(rawCY, floorY));
             // Measure text for pill width
-            ctx.font = '600 '+rcpFs(pillH < 18 ? 8 : 10)+'px "DM Sans", sans-serif';
+            ctx.font = '600 '+rcpFsValue(pillH < 18 ? 8 : 10)+'px "DM Sans", sans-serif';
             var txt = pct+'%';
             var tw  = ctx.measureText(txt).width;
             var pw  = tw + pillPad * 2;
@@ -7141,8 +7155,8 @@ function rcpGenerate() {
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top: 24, bottom: 36, left: 24, right: 40 } },
         plugins: {
-          title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position: 'bottom', labels: { font:{size:rcpFs(11)}, padding:14 } },
+          title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { position: 'bottom', labels: { font:{size:rcpFsAxis(11)}, padding:14 } },
         },
         scales: {
           x: {
@@ -7179,7 +7193,7 @@ function rcpGenerate() {
               const val = dataset.data[i];
               if (val === null || val === undefined) return;
               ctx.save();
-              ctx.font = '600 '+rcpFs(11)+'px "DM Sans", sans-serif';
+              ctx.font = '600 '+rcpFsValue(11)+'px "DM Sans", sans-serif';
               ctx.fillStyle = dataset.borderColor || '#333';
               ctx.textAlign = 'center';
               ctx.textBaseline = 'bottom';
@@ -7393,7 +7407,7 @@ function rcpGenerate() {
     }
 
     const nBars = dims.length;
-    const valFontSize = rcpFs(nBars > 15 ? 8 : (nBars > 8 ? 9 : 11));
+    const valFontSize = rcpFsValue(nBars > 15 ? 8 : (nBars > 8 ? 9 : 11));
 
     const rdValueLabels = {
       id: 'rdValueLabels',
@@ -7435,8 +7449,8 @@ function rcpGenerate() {
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top: 16, bottom: 20, left: 5, right: 20 } },
         plugins: {
-          title: { display: !rcpHideTitle, text:def.nombre, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFs(11)}, padding:14,
+          title: { display: !rcpHideTitle, text:def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14,
             generateLabels(chart) {
               return chart.data.datasets.map((ds,i)=>({
                 text: ds.label,
@@ -7454,7 +7468,7 @@ function rcpGenerate() {
           x: {
             grid: { display: false },
             ticks: {
-              font:{size:rcpFs(10)}, color:'#444',
+              font:{size:rcpFsAxis(10)}, color:'#444',
               maxRotation:90, minRotation:90, autoSkip:false, padding:6,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
@@ -7464,7 +7478,7 @@ function rcpGenerate() {
               }
             }
           },
-          y: { min:1, max:5, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFs(10)},stepSize:0.5} }
+          y: { min:1, max:5, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5} }
         },
         animation: { duration:400 }
       },
@@ -7601,7 +7615,7 @@ function rcpGenerate() {
     if(toolsEl) toolsEl.style.display = 'none';
 
     // Adaptive y-axis font size
-    const tickFontSize = rcpFs(groups.length > 20 ? 9 : groups.length > 12 ? 10 : 11);
+    const tickFontSize = rcpFsAxis(groups.length > 20 ? 9 : groups.length > 12 ? 10 : 11);
 
     // Plugin: % value labels inside each bar + "Confidencial" overlay for nmin-filtered rows
     const enpsValueLabels = {
@@ -7627,7 +7641,7 @@ function rcpGenerate() {
             if(barW < 24) return;
             const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
             ctx.save();
-            ctx.font = '600 '+rcpFs(10)+'px "DM Sans",sans-serif';
+            ctx.font = '600 '+rcpFsValue(10)+'px "DM Sans",sans-serif';
             ctx.fillStyle = '#1a1a1a';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -7642,7 +7656,7 @@ function rcpGenerate() {
         const ca = chart.chartArea;
         if(!scaleY || !ca) return;
         ctx.save();
-        ctx.font = 'italic '+rcpFs(10)+'px "DM Sans",sans-serif';
+        ctx.font = 'italic '+rcpFsValue(10)+'px "DM Sans",sans-serif';
         ctx.fillStyle = '#888';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -7689,7 +7703,7 @@ function rcpGenerate() {
       },
       plugins:{
         ...baseOpts.plugins,
-        legend:{ display:true, position:'bottom', labels:{font:{size:rcpFs(11)}, padding:14} },
+        legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, padding:14} },
         tooltip:{ callbacks:{ label: ctx=>{
           const state = RCP._enpsState;
           const n = state ? state.nPerGroup[ctx.dataIndex] : '';
@@ -7700,7 +7714,7 @@ function rcpGenerate() {
       },
       scales:{
         x:{ stacked:true, max:100, grid:{display:false}, border:{display:false},
-            ticks:{callback:v=>v+'%', font:{size:rcpFs(10)}} },
+            ticks:{callback:v=>v+'%', font:{size:rcpFsAxis(10)}} },
         y:{ stacked:true, grid:{display:false}, border:{display:false},
             ticks:{
               font:{size:tickFontSize},
@@ -7785,7 +7799,7 @@ function rcpGenerate() {
         const plg = chart.options.plugins.rcRankingPlugin;
         const nArr = plg?.nPerGroup || [];
         const nGroups = chart.data.labels.length;
-        const fs = rcpFs(nGroups > 15 ? 10 : 12);
+        const fs = rcpFsValue(nGroups > 15 ? 10 : 12);
         chart.data.datasets.forEach((ds, di) => {
           if (ds.type === 'line') return;
           const meta = chart.getDatasetMeta(di);
@@ -7808,7 +7822,7 @@ function rcpGenerate() {
         const scaleY = chart.scales.y;
         if (!scaleY || !nArr.length) return;
         ctx.save();
-        ctx.font = rcpFs(9)+'px "DM Mono", monospace';
+        ctx.font = rcpFsValue(9)+'px "DM Mono", monospace';
         ctx.fillStyle = 'rgba(80,80,80,0.72)';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -7845,7 +7859,7 @@ function rcpGenerate() {
     const h2 = Math.max(280, data.length * rowH2 + 80);
     if(canvasInner2){ canvasInner2.style.width='100%'; canvasInner2.style.height=h2+'px'; }
     if(canvasEl2){ canvasEl2.style.height=h2+'px'; canvasEl2.style.minHeight=h2+'px'; }
-    const tickFs = rcpFs(data.length > 20 ? 9 : data.length > 12 ? 10 : 11);
+    const tickFs = rcpFsAxis(data.length > 20 ? 9 : data.length > 12 ? 10 : 11);
     chartCfg = {
       type:'bar',
       data:{ labels:labelsRC, datasets:ds },
@@ -7854,8 +7868,8 @@ function rcpGenerate() {
         responsive:true, maintainAspectRatio:false,
         layout:{ padding:{ top:16, bottom:16, left:0, right:44 } },
         plugins:{
-          title:{ display: !rcpHideTitle, text:def.nombre+' — '+claLabel, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend:{ display:true, position:'bottom', labels:{font:{size:rcpFs(11)}, padding:14} },
+          title:{ display: !rcpHideTitle, text:def.nombre+' — '+claLabel, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, padding:14} },
           tooltip:{ callbacks:{ label: ctx => {
             const n = nPerGroupRC[ctx.dataIndex];
             return ctx.dataset.label+': '+(+ctx.raw).toFixed(2)+' (N='+n+')';
@@ -7864,7 +7878,7 @@ function rcpGenerate() {
         },
         scales:{
           x:{ min:scaleMin, max:scaleMax, grid:{display:false}, border:{display:false},
-              ticks:{font:{size:rcpFs(10)}, stepSize:0.5} },
+              ticks:{font:{size:rcpFsAxis(10)}, stepSize:0.5} },
           y:{ type:'category', grid:{display:false}, border:{display:false},
               ticks:{ font:{size:tickFs},
                 callback: function(val) {
@@ -7980,7 +7994,7 @@ function rcpGenerate() {
       },
     ];
 
-    const ocValFontSize = rcpFs(ocDims.length > 15 ? 8 : (ocDims.length > 8 ? 9 : 11));
+    const ocValFontSize = rcpFsValue(ocDims.length > 15 ? 8 : (ocDims.length > 8 ? 9 : 11));
     const ocValueLabels = {
       id: 'ocValueLabels',
       afterDatasetsDraw(chart) {
@@ -8017,15 +8031,15 @@ function rcpGenerate() {
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top:16, bottom:20, left:5, right:20 } },
         plugins: {
-          title: { display: !rcpHideTitle, text:ocTitle, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFs(11)}, padding:14 } },
+          title: { display: !rcpHideTitle, text:ocTitle, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14 } },
           tooltip: { callbacks:{ label: ctx=>ctx.dataset.label+': '+(ctx.raw!==null?(+ctx.raw).toFixed(2):'—') } },
         },
         scales: {
           x: {
             grid: { display:false }, border: { display:false },
             ticks: {
-              font:{size:rcpFs(10)}, color:'#444',
+              font:{size:rcpFsAxis(10)}, color:'#444',
               maxRotation:90, minRotation:90, autoSkip:false, padding:6,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
@@ -8035,7 +8049,7 @@ function rcpGenerate() {
               }
             }
           },
-          y: { min:scaleOCMin, max:scaleOCMax, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFs(10)},stepSize:0.5} }
+          y: { min:scaleOCMin, max:scaleOCMax, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5} }
         },
         animation: { duration:400 }
       },
@@ -8127,13 +8141,13 @@ function rcpGenerate() {
           rcp4sRoundRect(ctx, t.x, t.y, tileW, tileH, 10);
           ctx.fill();
           const cx = t.x + tileW/2, cy = t.y + tileH/2;
-          const valFont = rcpFs(Math.max(26, Math.min(46, tileH*0.42)));
+          const valFont = rcpFsValue(Math.max(26, Math.min(46, tileH*0.42)));
           ctx.textAlign = 'center';
           ctx.fillStyle = t.dark ? '#0B1E33' : '#ffffff';
           ctx.font = `800 ${valFont}px "DM Sans", sans-serif`;
           ctx.textBaseline = 'alphabetic';
           ctx.fillText((t.val!=null ? t.val+'%' : '—'), cx, cy - 4);
-          const lblFont = rcpFs(Math.max(11, Math.min(14, tileH*0.12)));
+          const lblFont = rcpFsValue(Math.max(11, Math.min(14, tileH*0.12)));
           ctx.font = `700 ${lblFont}px "DM Sans", sans-serif`;
           const lines = rcp4sWrapLines(ctx, t.label, tileW-16);
           lines.forEach((ln,i) => ctx.fillText(ln, cx, cy + 20 + i*(lblFont+3)));
@@ -8141,7 +8155,7 @@ function rcpGenerate() {
 
         ctx.fillStyle = '#5B6B82';
         ctx.textAlign = 'center';
-        const axisFont = rcpFs(14);   // antes 11 — nombres de eje más grandes
+        const axisFont = rcpFsAxis(14);   // antes 11 — nombres de eje más grandes
         const plusMinusGap = 54;      // separación aprox. del nombre hacia cada extremo del eje
 
         // ── Eje Engagement (vertical, izquierda): arriba = más, abajo = menos ──
@@ -8192,7 +8206,7 @@ function rcpGenerate() {
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top: 6, bottom: 6, left: 6, right: 6 } },
         plugins: {
-          title: { display: !rcpHideTitle, text: title4s, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          title: { display: !rcpHideTitle, text: title4s, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
           legend: { display: false },
           tooltip: { enabled: false },
           rcpQuadrant: { ...q4s },
@@ -8290,15 +8304,15 @@ Total: N=${q4s.n}`;
         responsive: true, maintainAspectRatio: false,
         layout: { padding: { top: 20, bottom: 36, left: 10, right: 20 } },
         plugins: {
-          title: { display: !rcpHideTitle, text: titleRd4s, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFs(11)}, padding:14 } },
+          title: { display: !rcpHideTitle, text: titleRd4s, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14 } },
           tooltip: { callbacks: { label: ctx => ctx.dataset.label.replace(/\s*\(N=\d+\)$/,'') + ': ' + (ctx.parsed.y!=null ? ctx.parsed.y.toFixed(2) : '—') } },
         },
         scales: {
           x: {
             grid:{display:false},
             ticks:{
-              font:{size:rcpFs(10)}, maxRotation:90, minRotation:90, autoSkip:false,
+              font:{size:rcpFsAxis(10)}, maxRotation:90, minRotation:90, autoSkip:false,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
                 var words=lbl.split(' '), lines=[];
@@ -8307,7 +8321,7 @@ Total: N=${q4s.n}`;
               }
             }
           },
-          y: { min:1, max:6, grid:{color:'rgba(0,0,0,.05)'}, ticks:{ stepSize:1, font:{size:rcpFs(10)} } },
+          y: { min:1, max:6, grid:{color:'rgba(0,0,0,.05)'}, ticks:{ stepSize:1, font:{size:rcpFsAxis(10)} } },
         },
         animation: { duration: 400 },
       },
@@ -8414,7 +8428,7 @@ Total: N=${q4s.n}`;
     // que se generó (automático o manual); 900 es el ancho por defecto del
     // slider "Ancho" — referencia estable que no depende de medidas de layout
     // tomadas antes de que el canvas termine de acomodarse a su contenedor.
-    const FONT_BASE_Q = { title:rcpFs(14), xtick:rcpFs(10), ytick:rcpFs(11), valDim:rcpFs(15), valItem:rcpFs(13) };
+    const FONT_BASE_Q = { title:rcpFsTitle(14), xtick:rcpFsAxis(10), ytick:rcpFsAxis(11), valDim:rcpFsValue(15), valItem:rcpFsValue(13) };
     const BASE_W_Q = 900;
     function rcpPregFontScale(chart) {
       const h = chart.height || baseHQ;
@@ -8744,12 +8758,12 @@ function rcpBaseOptions(title, stacked, yAxis) {
   return {
     responsive:true, maintainAspectRatio:false,
     plugins:{
-      title:{display: !!title && !document.getElementById('rcp_hide_title')?.checked, text:title, font:{size:rcpFs(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12}},
-      legend:{position:'bottom', labels:{font:{size:rcpFs(11)},padding:14}},
+      title:{display: !!title && !document.getElementById('rcp_hide_title')?.checked, text:title, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12}},
+      legend:{position:'bottom', labels:{font:{size:rcpFsAxis(11)},padding:14}},
     },
     scales:{
-      x:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFs(10)}}},
-      y:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFs(10)},callback:yAxis?.callback||undefined},
+      x:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)}}},
+      y:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},callback:yAxis?.callback||undefined},
          min:yAxis?.min, max:yAxis?.max}
     },
     animation:{duration:400}

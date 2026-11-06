@@ -6629,18 +6629,26 @@ function rcpGetParam(id) {
 // detección automática se equivoca de columna (ya pasó 2 veces en esta
 // sesión con bases reales), el usuario lo puede corregir ahí mismo sin
 // depender de que se reporte el bug y se arregle en el código.
+// Solo el promedio continuo — el flag binario "Alto X" NO se agrega acá
+// automáticamente aunque el gráfico tenga WORK_ENGAGEMENT/EXHAUSTION en
+// `requiere`, porque la mayoría de los gráficos (Histórico, Ranking
+// Criticidad, Óptimo vs Crítico) solo leen el promedio y JAMÁS tocan el
+// flag binario — mostrarlo ahí era confuso y no describía nada real. El
+// flag se agrega aparte, solo para los gráficos que de verdad lo usan (ver
+// RCP_FLAG_CHARTS más abajo).
 const RCP_VAR_DEFS = {
-  WORK_ENGAGEMENT: [
-    { key:'WORK_ENGAGEMENT', label:'Engagement (promedio)' },
-    { key:'ALTO_ENGAGEMENT', label:'Alto Engagement (binario)', flag:'eng' },
-  ],
-  EXHAUSTION: [
-    { key:'EXHAUSTION', label:'Agotamiento (promedio)' },
-    { key:'EXHAUSTED_BYNARY', label:'Alto Agotamiento (binario)', flag:'ago' },
-  ],
-  SELF_EFFICACY: [{ key:'SELF_EFFICACY', label:'Autoeficacia (promedio)' }],
-  OPTIMISM:      [{ key:'OPTIMISM',      label:'Optimismo (promedio)' }],
+  WORK_ENGAGEMENT: [{ key:'WORK_ENGAGEMENT', label:'Engagement (promedio)' }],
+  EXHAUSTION:      [{ key:'EXHAUSTION',      label:'Agotamiento (promedio)' }],
+  SELF_EFFICACY:   [{ key:'SELF_EFFICACY',   label:'Autoeficacia (promedio)' }],
+  OPTIMISM:        [{ key:'OPTIMISM',        label:'Optimismo (promedio)' }],
 };
+const RCP_FLAG_VAR_DEFS = [
+  { key:'ALTO_ENGAGEMENT',   label:'Alto Engagement (binario)',  flag:'eng' },
+  { key:'EXHAUSTED_BYNARY',  label:'Alto Agotamiento (binario)', flag:'ago' },
+];
+// Gráficos que efectivamente leen el flag binario precalculado (vía
+// rcpEngAgoCtx/rcpCuadrante4SegGroups) — el resto solo usa el promedio.
+const RCP_FLAG_CHARTS = new Set(['eng_col', 'agot_col', 'cuadrante_4seg', 'cuadrante_4seg_rd']);
 
 // Las 12 palancas de Recursos y Demandas (mismas que ALL_DIMS dentro de
 // rcpGenerate, pero sin filtrar por si se encontraron — acá interesa mostrar
@@ -6663,14 +6671,25 @@ const RCP_PALANCAS_VAR_DEFS = [
 // `requiere`, que para estos tipos quedó incompleto a propósito — ver
 // ALL_DIMS dentro de rcpGenerate).
 const RCP_FULL_PALANCAS_CHARTS = new Set(['recursos_demandas', 'optimo_critico', 'cuadrante_4seg_rd']);
+// Estos dos clasifican SOLO con el flag binario (vía rcpCuadrante4SegGroups) —
+// el promedio continuo de Engagement/Agotamiento figura en `requiere` nomás
+// como chequeo de "deben existir estas columnas", pero el gráfico nunca lo
+// lee ni lo muestra, así que no corresponde listarlo en el panel.
+const RCP_SKIP_CONTINUOUS_EA = new Set(['cuadrante_4seg', 'cuadrante_4seg_rd']);
 
 function rcpVarPanelItems(def) {
   const seen = new Set(), items = [];
   (def.requiere || []).forEach(req => {
+    if ((req === 'WORK_ENGAGEMENT' || req === 'EXHAUSTION') && RCP_SKIP_CONTINUOUS_EA.has(def.id)) return;
     (RCP_VAR_DEFS[req] || []).forEach(it => {
       if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }
     });
   });
+  if (RCP_FLAG_CHARTS.has(def.id)) {
+    RCP_FLAG_VAR_DEFS.forEach(it => {
+      if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }
+    });
+  }
   if (RCP_FULL_PALANCAS_CHARTS.has(def.id)) {
     RCP_PALANCAS_VAR_DEFS.forEach(it => {
       if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }

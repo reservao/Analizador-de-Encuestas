@@ -5512,12 +5512,21 @@ function findLastIndex(arr, pred) {
   return -1;
 }
 
+// Quita separadores (_, espacio, paréntesis) para comparar dos nombres de
+// columna "en igualdad de condiciones" — así "Oportunidades de Desarrollo"
+// (espacios) y el alias "oportunidades_de_desarrollo" (guión bajo) se
+// reconocen como la MISMA columna en vez de competir como si fueran
+// distintas. Antes solo se quitaba "_", así que esa columna nunca calzaba
+// "exacto" contra su propio alias y terminaba perdiendo contra un ítem suelto
+// (ej. "oppor1") que sí calzaba por startsWith en el nivel flojo.
+function rcpSqueeze(s) { return s.replace(/[_\s()]/g,''); }
+
 function colAliasLookup(nc, headers, normFn) {
   var idx = findLastIndex(headers, function(h) {
-    return normFn(h).replace(/[()]/g,'').split('-')[0].trim().replace(/_/g,'') === nc;
+    return rcpSqueeze(normFn(h).split('-')[0]) === nc;
   });
   if(idx>=0) return idx;
-  var colKey = Object.keys(RCP_COL_ALIASES).find(function(k){ return normFn(k).replace(/_/g,'')===nc; });
+  var colKey = Object.keys(RCP_COL_ALIASES).find(function(k){ return rcpSqueeze(normFn(k))===nc; });
   var aliases = colKey ? RCP_COL_ALIASES[colKey] : [];
   if(aliases.length) {
     // Primero una pasada SOLO con coincidencia exacta contra algún alias — una
@@ -5530,15 +5539,15 @@ function colAliasLookup(nc, headers, normFn) {
     // Engagement se calculara sobre el flag binario — valores tipo 0.15 en vez
     // de ~4.3, aunque el % de Alto Engagement mostrado al lado sí era correcto.
     idx = findLastIndex(headers, function(h) {
-      var nh = normFn(h).replace(/_/g,'').replace(/[()]/g,'');
-      return aliases.some(function(a){ return nh === normFn(a).replace(/_/g,''); });
+      var nh = rcpSqueeze(normFn(h));
+      return aliases.some(function(a){ return nh === rcpSqueeze(normFn(a)); });
     });
     if (idx < 0) {
       idx = findLastIndex(headers, function(h) {
-        var nh = normFn(h).replace(/_/g,'').replace(/[()]/g,'');
+        var nh = rcpSqueeze(normFn(h));
         return aliases.some(function(a){
-          var na = normFn(a).replace(/_/g,'');
-          return nh.startsWith(na) || nh.includes(' '+na) || nh.includes('-'+na);
+          var na = rcpSqueeze(normFn(a));
+          return nh.startsWith(na) || nh.includes(na);
         });
       });
     }

@@ -955,13 +955,13 @@ tr:hover td { background: var(--bg); }
       <div id="p5-org-detail"></div>
     </div>
 
-    <div class="slbl">Óptimo / Crítico por Palanca</div>
+    <div class="slbl">Alto / Bajo por Palanca</div>
     <div class="card" style="padding:1rem 1.25rem">
       <p style="margin:0 0 .75rem;font-size:12px;color:var(--text2)">
         Mismo criterio de percentiles (P25/P75) que Engagement/Agotamiento, aplicado a cada palanca
-        de Recursos y Demandas. En <b>Recursos</b> lo óptimo es el 25% superior y lo crítico el 25%
-        inferior; en <b>Demandas</b> se invierte (óptimo = 25% inferior, crítico = 25% superior), porque
-        menos demanda es mejor.
+        de Recursos y Demandas: <b>Alto</b> = la persona puntuó en el 25% superior del grupo en esa
+        palanca, <b>Bajo</b> = en el 25% inferior. Es el puntaje real, no si es bueno o malo — en una
+        Demanda (ej. Presión) Alto significa más presión, no mejor resultado.
       </p>
       <div id="p5-palancas-detail"></div>
     </div>
@@ -976,7 +976,7 @@ tr:hover td { background: var(--bg); }
       <div class="dl-item">
         <div>
           <div class="dl-title">Excel con nuevas variables</div>
-          <div class="dl-sub">Datos originales + VIGOR, ABSORTION, DEDICATION, VIGOR_BINARY, ABSORTION_BINARY, DEDICATION_BINARY, ALTO_ENGAGEMENT, ALTO_AGOTAMIENTO, ENPS_CAT, OPT_/CRIT_ por cada palanca</div>
+          <div class="dl-sub">Datos originales + VIGOR, ABSORTION, DEDICATION, VIGOR_BINARY, ABSORTION_BINARY, DEDICATION_BINARY, ALTO_ENGAGEMENT, ALTO_AGOTAMIENTO, ENPS_CAT, ALTO_/BAJO_ por cada palanca</div>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="dlNewVars()">⬇ Descargar .xlsx</button>
       </div>
@@ -2662,18 +2662,19 @@ function runNewVars() {
     const critOrg   = (critAgot !== null && critEng !== null)
       ? (critAgot === 1 && critEng === 1 ? 1 : 0) : null;
 
-    // Óptimo/Crítico por palanca: en Recursos, óptimo = P75 superior (más es
-    // mejor); en Demandas se invierte, óptimo = P25 inferior (menos es mejor).
+    // Alto/Bajo por palanca: puntaje crudo literal respecto al grupo — Alto =
+    // 25% superior (P75), Bajo = 25% inferior (P25), sin invertir la dirección
+    // entre Recursos y Demandas (antes se llamaba Óptimo/Crítico e invertía la
+    // dirección en Demandas para que "óptimo" siempre significara "bueno"; se
+    // simplificó a que el nombre describa el puntaje real, no si es bueno o malo
+    // — así "Alto Presión" sí significa que la persona puntuó alto en Presión).
     const palancasBin = {};
     PALANCAS_IDS.forEach(id => {
       const v = r.palancas[id];
       const { p25, p75 } = palancaPercentiles[id];
-      const esRecurso = PALANCAS_RECURSOS.includes(id);
-      const opt  = (v !== null && p75 !== null && p25 !== null)
-        ? (esRecurso ? (v >= p75 ? 1 : 0) : (v <= p25 ? 1 : 0)) : null;
-      const crit = (v !== null && p75 !== null && p25 !== null)
-        ? (esRecurso ? (v <= p25 ? 1 : 0) : (v >= p75 ? 1 : 0)) : null;
-      palancasBin[id] = { value: v, opt, crit };
+      const alto = (v !== null && p75 !== null && p25 !== null) ? (v >= p75 ? 1 : 0) : null;
+      const bajo = (v !== null && p75 !== null && p25 !== null) ? (v <= p25 ? 1 : 0) : null;
+      palancasBin[id] = { value: v, alto, bajo };
     });
 
     return { ...r, vigorBin, absortionBin, dedicationBin, altoEng, altoAgot, enpsCat,
@@ -2687,10 +2688,10 @@ function runNewVars() {
   const validAgot = rows.filter(r => r.altoAgot  !== null);
   const validOrg  = rows.filter(r => r.optimoOrg !== null);
 
-  // Resumen por palanca para la tabla "Óptimo / Crítico por Palanca"
+  // Resumen por palanca para la tabla "Alto / Bajo por Palanca"
   const palancasSummary = PALANCAS_IDS.map(id => {
     const dim = MAESTRO.find(m => m.id === id);
-    const valid = rows.filter(r => r.palancas[id].opt !== null);
+    const valid = rows.filter(r => r.palancas[id].alto !== null);
     const avgVal = numAvg(rows.map(r => r.palancas[id].value).filter(v => v !== null));
     return {
       id, nombre: dim ? dim.nombre : id,
@@ -2698,8 +2699,8 @@ function runNewVars() {
       avg: avgVal,
       p25: palancaPercentiles[id].p25 !== null ? +palancaPercentiles[id].p25.toFixed(4) : null,
       p75: palancaPercentiles[id].p75 !== null ? +palancaPercentiles[id].p75.toFixed(4) : null,
-      optN:  cnt(valid, r => r.palancas[id].opt  === 1),
-      critN: cnt(valid, r => r.palancas[id].crit === 1),
+      altoN: cnt(valid, r => r.palancas[id].alto === 1),
+      bajoN: cnt(valid, r => r.palancas[id].bajo === 1),
       total: valid.length,
       avail: valid.length > 0,
     };
@@ -2839,12 +2840,12 @@ function renderNewVars() {
         </div>
       </div>`;
 
-  // Óptimo/Crítico por palanca
+  // Alto/Bajo por palanca
   const palancasAvail = r.palancasSummary.some(p => p.avail);
   document.getElementById('p5-palancas-detail').innerHTML = !palancasAvail
     ? '<p style="font-size:12px;color:var(--text2)">No se encontraron las preguntas de Recursos/Demandas necesarias en este archivo.</p>'
     : `<div class="tbl-wrap"><table>
-        <thead><tr><th>Palanca</th><th>Tipo</th><th>Promedio</th><th>P25</th><th>P75</th><th>Óptimo</th><th>Crítico</th></tr></thead>
+        <thead><tr><th>Palanca</th><th>Tipo</th><th>Promedio</th><th>P25</th><th>P75</th><th>Alto</th><th>Bajo</th></tr></thead>
         <tbody>${r.palancasSummary.map(p => !p.avail ? `<tr>
             <td>${p.nombre}</td><td style="color:var(--text2);font-size:11px">${p.tipo}</td>
             <td colspan="5" style="color:var(--text2);font-size:11px">Sin preguntas detectadas</td>
@@ -2854,8 +2855,8 @@ function renderNewVars() {
             <td class="td-mono">${p.avg ?? '—'}</td>
             <td class="td-mono">${p.p25 ?? '—'}</td>
             <td class="td-mono">${p.p75 ?? '—'}</td>
-            <td class="td-mono">${fmtN(p.optN, p.total)}</td>
-            <td class="td-mono">${fmtN(p.critN, p.total)}</td>
+            <td class="td-mono">${fmtN(p.altoN, p.total)}</td>
+            <td class="td-mono">${fmtN(p.bajoN, p.total)}</td>
           </tr>`).join('')}
         </tbody>
       </table></div>`;
@@ -2891,7 +2892,7 @@ function renderNewVars() {
 function dlNewVars() {
   if (!NV) return;
   const palancaCols = PALANCAS_IDS.flatMap(id => [
-    `OPT_${id.toUpperCase()}`, `CRIT_${id.toUpperCase()}`
+    `ALTO_${id.toUpperCase()}`, `BAJO_${id.toUpperCase()}`
   ]);
   const newCols = [
     'VIGOR','ABSORTION','DEDICATION',
@@ -2911,7 +2912,7 @@ function dlNewVars() {
       r.altoEng, r.altoAgot, r.enpsCat,
       r.critAgot, r.optAgot, r.critEng, r.optEng,
       r.optimoOrg, r.critOrg,
-      ...PALANCAS_IDS.flatMap(id => [r.palancas[id].opt, r.palancas[id].crit])
+      ...PALANCAS_IDS.flatMap(id => [r.palancas[id].alto, r.palancas[id].bajo])
     ].map(v => v === null || v === undefined ? '' : v);
   });
   const wb = XLSX.utils.book_new();

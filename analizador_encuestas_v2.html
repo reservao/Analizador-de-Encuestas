@@ -4468,7 +4468,7 @@ function rGoSub(sub) {
   if (sub === 'informe' && typeof irRefreshForm === 'function') irRefreshForm();
 }
 
-let R = { headers:[], rows:[], filename:'', mediciones:[], selectedMeds:[] };
+let R = { headers:[], rows:[], filename:'', mediciones:[], selectedMeds:[], colOverrides:{} };
 
 // ─── SHARED UTILITY FUNCTIONS ──────────────────────────────────────────────
 function normalize(s) {
@@ -4728,7 +4728,7 @@ function rReset() {
 }
 
 // ─── SECCIÓN 3B: GRÁFICOS ──────────────────────────────────────────────────
-let RC = { headers:[], rows:[], filename:'', mediciones:[], selectedMeds:[], chartType:'bar', chart:null };
+let RC = { headers:[], rows:[], filename:'', mediciones:[], selectedMeds:[], chartType:'bar', chart:null, colOverrides:{} };
 
 const RC_PALETTE = [
   '#1B3F6E','#C05A2A','#1B5E3B','#6B3A5E','#4A6741','#B8860B',
@@ -4781,11 +4781,11 @@ function rcColIdx(col) {
   return RC.headers.findIndex(h => h === col || rcNorm(h) === rcNorm(col));
 }
 
+// Mismo motor que Gráficos y Tablas Excel (resolveColIdx, definido más abajo
+// junto a RCP) — antes solo tenía 2 niveles (exacto + alias, sin el nivel 3
+// de búsqueda aproximada que sí tienen los otros dos módulos).
 function rColIdxFuzzy(name) {
-  var idx = rcColIdx(name);
-  if (idx >= 0) return idx;
-  var nc = rcNorm(name).replace(/_/g, '');
-  return colAliasLookup(nc, RC.headers, rcNorm);
+  return resolveColIdx(RC.headers, name, RC.colOverrides);
 }
 
 function rcMean(rows, col) {
@@ -5555,56 +5555,70 @@ function colAliasLookup(nc, headers, normFn) {
   return idx;
 }
 
+// ── Motor de búsqueda de columnas COMPARTIDO ────────────────────────────────
+// Usado por Gráficos (RCP), Tablas Excel (R) y Gráficos Libres (RC) — los 3
+// módulos que buscan una columna de DIMENSIÓN por nombre/alias (distinto del
+// módulo One Page, que arma sus promedios ítem por ítem vía findCol/
+// itemTextCol y queda para una próxima etapa). Antes cada uno tenía su propia
+// copia ligeramente distinta del mismo algoritmo, así que un arreglo de
+// detección (ej. "tratar espacio y guión bajo igual", "último match gana
+// cuando hay duplicados exactos") solo quedaba aplicado donde se hizo el
+// cambio a mano. Ahora hay un solo lugar: arreglar acá arregla los 3 módulos
+// a la vez.
+function resolveColIdx(headers, query, overrides) {
+  // Override manual del usuario (panel "Columnas detectadas") — tiene prioridad
+  // absoluta sobre cualquier detección automática. Clave = el mismo string que
+  // se busca (ej. 'WORK_ENGAGEMENT', 'ALTO_ENGAGEMENT', 'WE1').
+  if (overrides && Object.prototype.hasOwnProperty.call(overrides, query)) {
+    var forced = overrides[query];
+    if (!forced) return -1; // '' = "no usar ninguna columna" explícito
+    var fIdx = headers.indexOf(forced);
+    if (fIdx >= 0) return fIdx;
+  }
+  // Nivel 1: exacto (último match si el nombre está duplicado en el archivo)
+  var idx = findLastIndex(headers, function(h) { return h === query || rcpNorm(h) === rcpNorm(query); });
+  if (idx >= 0) return idx;
+  // Nivel 2: tabla de alias compartida (RCP_COL_ALIASES — variantes de
+  // plataforma y español, ej. "colaboracion"→SOCIAL_SUPPORT)
+  var nc = rcpSqueeze(rcpNorm(query));
+  idx = colAliasLookup(nc, headers, rcpNorm);
+  if (idx >= 0) return idx;
+  // Nivel 3: fuzzy — el encabezado contiene el nombre como parte de su token.
+  // Maneja formatos como "(WE1-1.5)", "Promedio Engagement", "WORK_ENGAGEMENT_D9".
+  // No cae en una columna binaria/indicadora (ej. "DEDICATION_BINARY") al
+  // buscar el promedio de una dimensión, salvo que la búsqueda misma sea
+  // explícitamente por eso: "dedicationbinary".startsWith("dedication").
+  var queryWantsBinary = /binary|bynary|binario/i.test(nc);
+  var binarySafe = function(h) {
+    if (!h) return false;
+    var nh = rcpSqueeze(rcpNorm(h));
+    return queryWantsBinary || !/binary|bynary|binario/i.test(nh);
+  };
+  // Primero exacto (nombre completo o algún token separado por "-_()." calza
+  // igual), recién si no hay ninguna coincidencia exacta se usa el match
+  // flojo (startsWith/endsWith) — para que una columna tipo
+  // "ENGAGEMENT_PROPORTION" no le gane a "ENGAGEMENT" solo por venir después.
+  var idx3 = findLastIndex(headers, function(h) {
+    if (!binarySafe(h)) return false;
+    var nh = rcpSqueeze(rcpNorm(h));
+    if (nh === nc) return true;
+    var parts = h.split(/[-_()\s.]/);
+    return parts.some(function(p) { return rcpSqueeze(rcpNorm(p)) === nc; });
+  });
+  if (idx3 >= 0) return idx3;
+  return findLastIndex(headers, function(h) {
+    if (!binarySafe(h)) return false;
+    var nh = rcpSqueeze(rcpNorm(h));
+    return nh.startsWith(nc) || nh.endsWith(nc);
+  });
+}
+
 function rcpColIdx(col) {
   return findLastIndex(RCP.headers, h => h===col || rcpNorm(h)===rcpNorm(col));
 }
 
 function rcpColIdxFuzzy(col) {
-  // Override manual del usuario (panel "Columnas detectadas") — tiene prioridad
-  // absoluta sobre cualquier detección automática. Clave = el mismo string que
-  // se busca (ej. 'WORK_ENGAGEMENT', 'ALTO_ENGAGEMENT', 'WE1'), así que cualquier
-  // llamada a rcpColIdxFuzzy/rcpItemIdx con esa clave queda forzada.
-  if (RCP.colOverrides && Object.prototype.hasOwnProperty.call(RCP.colOverrides, col)) {
-    var forced = RCP.colOverrides[col];
-    if (!forced) return -1; // '' = "no usar ninguna columna" explícito
-    var fIdx = RCP.headers.indexOf(forced);
-    if (fIdx >= 0) return fIdx;
-  }
-  // Nivel 1: exacto
-  var idx = rcpColIdx(col);
-  if (idx >= 0) return idx;
-  // Nivel 2: alias table (variantes de plataforma y español)
-  var nc = rcpNorm(col).replace(/_/g,'').replace(/ /g,'');
-  idx = colAliasLookup(nc, RCP.headers, rcpNorm);
-  if (idx >= 0) return idx;
-  // Nivel 3: fuzzy — el encabezado contiene el nombre como parte de su token
-  // Maneja formatos como "(WE1-1.5)", "Promedio Engagement", "WORK_ENGAGEMENT_D9"
-  // No cae en una columna binaria/indicadora (ej. "DEDICATION_BINARY") al buscar el
-  // promedio de una dimensión, salvo que la búsqueda misma sea explícitamente por eso
-  // — mismo bug que en rColIdx (R): "dedicationbinary".startsWith("dedication").
-  var queryWantsBinary = /binary|bynary|binario/i.test(nc);
-  const binarySafe = h => {
-    if (!h) return false;
-    var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
-    return queryWantsBinary || !/binary|bynary|binario/i.test(nh);
-  };
-  // Igual que en colAliasLookup: primero exacto (nombre completo o algún token
-  // separado por "-_()." calza igual), recién si no hay ninguna coincidencia
-  // exacta se usa el match flojo (startsWith/endsWith) — para que una columna
-  // tipo "ENGAGEMENT_PROPORTION" no le gane a "ENGAGEMENT" solo por venir después.
-  let idx3 = findLastIndex(RCP.headers, h => {
-    if (!binarySafe(h)) return false;
-    var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
-    if (nh === nc) return true;
-    var parts = h.split(/[-_()\s.]/);
-    return parts.some(p => rcpNorm(p).replace(/_/g,'') === nc);
-  });
-  if (idx3 >= 0) return idx3;
-  return findLastIndex(RCP.headers, h => {
-    if (!binarySafe(h)) return false;
-    var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
-    return nh.startsWith(nc) || nh.endsWith(nc);
-  });
+  return resolveColIdx(RCP.headers, col, RCP.colOverrides);
 }
 // Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido
 // (ITEM_CODE_TEXTS, definido junto a findCol) — para archivos que traen el texto de la
@@ -9070,31 +9084,13 @@ function rFindHdrCol(candidates) {
   return -1;
 }
 
+// Ahora usa el mismo motor que Gráficos (resolveColIdx) — ver su definición
+// más arriba. Antes era una implementación aparte sin tabla de alias y con
+// "primer match" en vez de "último match", así que no se beneficiaba de
+// ningún arreglo hecho del lado de Gráficos. R.colOverrides queda disponible
+// para cuando Tablas Excel tenga su propio panel de override manual.
 function rColIdx(name) {
-  // 1. Exact match
-  const exact = R.headers.indexOf(name);
-  if (exact >= 0) return exact;
-  // 2. Normalized exact match
-  const nq = rNorm(name);
-  const normExact = R.headers.findIndex(h => rNorm(h) === nq);
-  if (normExact >= 0) return normExact;
-  // 3. Fuzzy: header contains the code as a word-part (handles "(WE1-1.5)", "(EX1)", etc.)
-  // Nunca cae aquí en una columna binaria/indicadora (ej. "DEDICATION_BINARY") cuando
-  // se busca el promedio de la dimensión — "dedicationbinary".startsWith("dedication")
-  // es verdadero y antes hacía que el promedio se calculara sobre un 0/1 en vez de la
-  // escala real. Se excluye salvo que la búsqueda misma sea explícitamente por eso.
-  const queryWantsBinary = /binary|bynary|binario/i.test(nq);
-  return R.headers.findIndex(h => {
-    const nh = rNorm(h);
-    if (!queryWantsBinary && /binary|bynary|binario/i.test(nh)) return false;
-    const parts = h.split(/[-_()\s.]/);
-    if (parts.some(p => rNorm(p) === nq)) return true;
-    if (nh.startsWith(nq) || nh.endsWith(nq)) return true;
-    if (nh.includes('-' + nq + '-') || nh.includes('(' + nq + ')')) return true;
-    const nhCompact = nh.replace(/\s+/g, '');
-    if (nhCompact.startsWith(nq)) return true;
-    return false;
-  });
+  return resolveColIdx(R.headers, name, R.colOverrides);
 }
 
 // Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido

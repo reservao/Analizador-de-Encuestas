@@ -6619,6 +6619,28 @@ const RCP_VAR_DEFS = {
   OPTIMISM:      [{ key:'OPTIMISM',      label:'Optimismo (promedio)' }],
 };
 
+// Las 12 palancas de Recursos y Demandas (mismas que ALL_DIMS dentro de
+// rcpGenerate, pero sin filtrar por si se encontraron — acá interesa mostrar
+// también las que NO se encontraron, para poder asignarlas a mano).
+const RCP_PALANCAS_VAR_DEFS = [
+  { key:'SELF_EFFICACY',                label:'Autoeficacia (promedio)' },
+  { key:'OPTIMISM',                     label:'Optimismo (promedio)' },
+  { key:'OPPORTUNITIES_FOR_DEVELOPMENT',label:'Oportunidades de Desarrollo (promedio)' },
+  { key:'COACH',                        label:'Coaching del Líder (promedio)' },
+  { key:'FEEDBACK',                     label:'Retroalimentación (promedio)' },
+  { key:'SOCIAL_SUPPORT',               label:'Colaboración (promedio)' },
+  { key:'AUTONOMY',                     label:'Autonomía (promedio)' },
+  { key:'WORK_PRESSURE',                label:'Presión en el Trabajo (promedio)' },
+  { key:'COGNITIVE_DEMANDS',            label:'Demandas Cognitivas (promedio)' },
+  { key:'EMOTIONAL_DEMANDS',            label:'Demandas Emocionales (promedio)' },
+  { key:'ROLE_CONFLICT',                label:'Conflicto de Rol (promedio)' },
+  { key:'HASSLES',                      label:'Trabas en el Trabajo (promedio)' },
+];
+// Gráficos que usan las 12 palancas completas (no solo lo que liste
+// `requiere`, que para estos tipos quedó incompleto a propósito — ver
+// ALL_DIMS dentro de rcpGenerate).
+const RCP_FULL_PALANCAS_CHARTS = new Set(['recursos_demandas', 'optimo_critico', 'cuadrante_4seg_rd']);
+
 function rcpVarPanelItems(def) {
   const seen = new Set(), items = [];
   (def.requiere || []).forEach(req => {
@@ -6626,6 +6648,11 @@ function rcpVarPanelItems(def) {
       if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }
     });
   });
+  if (RCP_FULL_PALANCAS_CHARTS.has(def.id)) {
+    RCP_PALANCAS_VAR_DEFS.forEach(it => {
+      if (!seen.has(it.key)) { seen.add(it.key); items.push(it); }
+    });
+  }
   return items;
 }
 

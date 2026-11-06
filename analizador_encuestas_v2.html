@@ -5512,13 +5512,28 @@ function colAliasLookup(nc, headers, normFn) {
   var colKey = Object.keys(RCP_COL_ALIASES).find(function(k){ return normFn(k).replace(/_/g,'')===nc; });
   var aliases = colKey ? RCP_COL_ALIASES[colKey] : [];
   if(aliases.length) {
+    // Primero una pasada SOLO con coincidencia exacta contra algún alias — una
+    // columna que calza exacto (ej. "ENGAGEMENT") siempre debe ganarle a una que
+    // solo calza "flojo" por startsWith/contains (ej. "ENGAGEMENT_PROPORTION"
+    // para el alias "engagement"), sin importar cuál aparece más al final del
+    // archivo. Si no hay ninguna exacta, recién ahí se usa el match flojo.
+    // Bug real: un archivo con columna "ENGAGEMENT_PROPORTION" (flag 0/1) más
+    // adelante que "ENGAGEMENT" (promedio 1-6) hacía que el promedio de
+    // Engagement se calculara sobre el flag binario — valores tipo 0.15 en vez
+    // de ~4.3, aunque el % de Alto Engagement mostrado al lado sí era correcto.
     idx = findLastIndex(headers, function(h) {
       var nh = normFn(h).replace(/_/g,'').replace(/[()]/g,'');
-      return aliases.some(function(a){
-        var na = normFn(a).replace(/_/g,'');
-        return nh===na || nh.startsWith(na) || nh.includes(' '+na) || nh.includes('-'+na);
-      });
+      return aliases.some(function(a){ return nh === normFn(a).replace(/_/g,''); });
     });
+    if (idx < 0) {
+      idx = findLastIndex(headers, function(h) {
+        var nh = normFn(h).replace(/_/g,'').replace(/[()]/g,'');
+        return aliases.some(function(a){
+          var na = normFn(a).replace(/_/g,'');
+          return nh.startsWith(na) || nh.includes(' '+na) || nh.includes('-'+na);
+        });
+      });
+    }
   }
   return idx;
 }
@@ -5541,15 +5556,27 @@ function rcpColIdxFuzzy(col) {
   // promedio de una dimensión, salvo que la búsqueda misma sea explícitamente por eso
   // — mismo bug que en rColIdx (R): "dedicationbinary".startsWith("dedication").
   var queryWantsBinary = /binary|bynary|binario/i.test(nc);
-  return findLastIndex(RCP.headers, h => {
+  const binarySafe = h => {
     if (!h) return false;
     var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
-    if (!queryWantsBinary && /binary|bynary|binario/i.test(nh)) return false;
+    return queryWantsBinary || !/binary|bynary|binario/i.test(nh);
+  };
+  // Igual que en colAliasLookup: primero exacto (nombre completo o algún token
+  // separado por "-_()." calza igual), recién si no hay ninguna coincidencia
+  // exacta se usa el match flojo (startsWith/endsWith) — para que una columna
+  // tipo "ENGAGEMENT_PROPORTION" no le gane a "ENGAGEMENT" solo por venir después.
+  let idx3 = findLastIndex(RCP.headers, h => {
+    if (!binarySafe(h)) return false;
+    var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
     if (nh === nc) return true;
     var parts = h.split(/[-_()\s.]/);
-    if (parts.some(p => rcpNorm(p).replace(/_/g,'') === nc)) return true;
-    if (nh.startsWith(nc) || nh.endsWith(nc)) return true;
-    return false;
+    return parts.some(p => rcpNorm(p).replace(/_/g,'') === nc);
+  });
+  if (idx3 >= 0) return idx3;
+  return findLastIndex(RCP.headers, h => {
+    if (!binarySafe(h)) return false;
+    var nh = rcpNorm(h).replace(/_/g,'').replace(/ /g,'');
+    return nh.startsWith(nc) || nh.endsWith(nc);
   });
 }
 // Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido

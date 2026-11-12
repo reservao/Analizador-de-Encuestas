@@ -1026,6 +1026,8 @@ tr:hover td { background: var(--bg); }
       </div>
     </div>
 
+    <div id="r-healthcheck" style="display:none"></div>
+
     <!-- Paso B: Seleccionar mediciones -->
     <div id="r-config-wrap" style="display:none">
       <div class="card">
@@ -1108,6 +1110,7 @@ tr:hover td { background: var(--bg); }
               <button class="btn btn-secondary btn-sm" onclick="rcpReset()">↩ Cambiar archivo</button>
             </div>
           </div>
+          <div id="rcp-healthcheck" style="display:none"></div>
           <div class="slbl" style="margin-top:0">Selecciona el gráfico a generar</div>
           <div id="rcp-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem"></div>
         </div>
@@ -1308,6 +1311,8 @@ tr:hover td { background: var(--bg); }
           </div>
         </div>
       </div>
+
+      <div id="rop-healthcheck" style="display:none"></div>
 
       <!-- Paso 2: Filtros -->
       <div id="rop-filters-wrap" style="display:none">
@@ -4710,6 +4715,7 @@ function rProcess(wb, filename) {
 
   document.getElementById('r-upload-wrap').style.display = 'none';
   document.getElementById('r-config-wrap').style.display = 'block';
+  rcpRenderHealthCheck('R');
 }
 
 function rToggleMed(med, checked) {
@@ -5897,6 +5903,7 @@ function rcpProcess(wb, filename) {
   document.getElementById('rcp-cards').innerHTML = cards;
   document.getElementById('rcp-upload-wrap').style.display='none';
   document.getElementById('rcp-grid-wrap').style.display='block';
+  rcpRenderHealthCheck('RCP');
 }
 
 function rcpSelectDef(i) {
@@ -6849,6 +6856,136 @@ function rcpSetColOverride(key, value) {
   else delete RCP.colOverrides[key];
   rcpGenerate();
 }
+
+// ── Panel de salud de la base (Tablas Excel / Gráficos Predeterminados / One
+// Page) ──────────────────────────────────────────────────────────────────
+// A diferencia del panel "Columnas detectadas" (que solo muestra lo que el
+// gráfico ABIERTO usa), este revisa las 14 dimensiones de R_DIMS completas
+// apenas se carga el archivo, con semáforo verde/rojo — pensado para que el
+// problema se note ANTES de entrar a armar un gráfico o tabla puntual, y
+// permitir corregirlo ahí mismo. Reusa resolveColIdx (el mismo motor que ya
+// comparten Gráficos/Tablas Excel/Gráficos Libres), así que una columna mal
+// detectada se ve y se corrige en el mismo lugar para los 3 módulos.
+function rcpHealthCheckDim(dim, headers, rows, overrides) {
+  const items = (dim.items || []).concat((dim.sub || []).flatMap(s => s.items));
+  const itemResults = items.map(([code, text]) => {
+    let idx = resolveColIdx(headers, code, {}, rows);
+    if (idx < 0 && text) idx = resolveColIdx(headers, text, {}, rows);
+    return { code, text, found: idx >= 0, colName: idx >= 0 ? headers[idx] : null };
+  });
+  const override = overrides && overrides[dim.nombre];
+  if (override) {
+    const idx = headers.indexOf(override);
+    return { ok: idx >= 0, via: 'override', colName: idx >= 0 ? override : null, itemResults };
+  }
+  for (const c of dim.cols) {
+    const idx = resolveColIdx(headers, c, {}, rows);
+    if (idx >= 0) return { ok: true, via: 'column', colName: headers[idx], itemResults };
+  }
+  if (dim.sub && dim.sub.length) {
+    const subOk = dim.sub.every(s => {
+      if (s.cols.some(c => resolveColIdx(headers, c, {}, rows) >= 0)) return true;
+      return s.items.some(([code, text]) => {
+        let idx = resolveColIdx(headers, code, {}, rows);
+        if (idx < 0 && text) idx = resolveColIdx(headers, text, {}, rows);
+        return idx >= 0;
+      });
+    });
+    if (subOk) return { ok: true, via: 'subdims', colName: null, itemResults };
+  }
+  const foundItems = itemResults.filter(i => i.found).length;
+  if (items.length > 0 && foundItems === items.length) return { ok: true, via: 'items', colName: null, itemResults };
+  if (foundItems > 0) return { ok: false, partial: true, via: 'items-partial', colName: null, itemResults, foundItems, totalItems: items.length };
+  return { ok: false, via: 'none', colName: null, itemResults };
+}
+
+const RCP_HEALTH_REGISTRY = {};
+function rcpRegisterHealthCheck(moduleTag, containerId, editable) {
+  RCP_HEALTH_REGISTRY[moduleTag] = { containerId, editable };
+}
+function rcpHealthModuleObj(moduleTag) {
+  return moduleTag === 'R' ? R : moduleTag === 'RCP' ? RCP : moduleTag === 'ROP' ? ROP : null;
+}
+function rcpHealthSetOverride(moduleTag, key, value) {
+  const obj = rcpHealthModuleObj(moduleTag);
+  if (!obj) return;
+  if (!obj.colOverrides) obj.colOverrides = {};
+  if (value) obj.colOverrides[key] = value; else delete obj.colOverrides[key];
+  rcpRenderHealthCheck(moduleTag);
+}
+
+function rcpRenderHealthCheck(moduleTag) {
+  const reg = RCP_HEALTH_REGISTRY[moduleTag];
+  if (!reg) return;
+  const container = document.getElementById(reg.containerId);
+  if (!container) return;
+  const obj = rcpHealthModuleObj(moduleTag);
+  if (!obj || !obj.headers || !obj.headers.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  const headers = obj.headers, rows = obj.rows, overrides = obj.colOverrides || {};
+  const results = R_DIMS.map(dim => ({ dim, r: rcpHealthCheckDim(dim, headers, rows, overrides) }));
+  const okCount = results.filter(x => x.r.ok).length;
+  const allOk = okCount === results.length;
+  const bannerText = allOk
+    ? `Las ${results.length} dimensiones se detectaron correctamente`
+    : `${results.length - okCount} de ${results.length} dimensiones con problemas — revisa el detalle`;
+
+  const rowsHtml = results.map(({ dim, r }) => {
+    const icon = r.ok ? '✓' : (r.partial ? '⚠' : '✗');
+    const iconColor = r.ok ? '#2E7D32' : (r.partial ? '#B8860B' : '#B23B2E');
+    let detail;
+    if (r.ok && r.colName) detail = `<code>${escHtml(r.colName)}</code>`;
+    else if (r.ok && r.via === 'subdims') detail = `<span style="color:var(--text2)">calculado desde sub-dimensiones</span>`;
+    else if (r.ok && r.via === 'items') detail = `<span style="color:var(--text2)">calculado desde ${r.itemResults.length} ítems</span>`;
+    else if (r.partial) detail = `<span style="color:#B8860B">solo ${r.foundItems} de ${r.totalItems} ítems encontrados</span>`;
+    else detail = `<span style="color:#B23B2E">no encontrada</span>`;
+
+    const itemsDetailRows = r.itemResults.map(it => {
+      const iIcon = it.found ? '✓' : '✗';
+      const iColor = it.found ? '#2E7D32' : '#B23B2E';
+      return `<div style="display:flex;gap:8px;font-size:11px;padding:2px 0">
+        <span style="color:${iColor};width:14px;flex-shrink:0">${iIcon}</span>
+        <span style="color:var(--text2);flex:0 0 55px">${escHtml(it.code)}</span>
+        <span style="flex:1;color:${it.found ? 'var(--text)' : 'var(--text2)'}">${escHtml(it.found ? it.colName : (it.text || '(sin texto conocido)'))}</span>
+      </div>`;
+    }).join('');
+
+    const overrideHtml = reg.editable ? `
+      <select onchange="rcpHealthSetOverride('${moduleTag}','${escJsAttr(dim.nombre)}', this.value)"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[dim.nombre] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>` : '';
+
+    return `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+        <span style="color:${iconColor};width:14px;flex-shrink:0">${icon}</span>
+        <span style="flex:0 0 190px">${escHtml(dim.nombre)}</span>
+        <span style="flex:1;min-width:140px">${detail}</span>
+        ${overrideHtml}
+      </summary>
+      <div style="padding:6px 0 6px 24px">${itemsDetailRows || '<span style="font-size:11px;color:var(--text2)">Esta dimensión no tiene ítems individuales definidos.</span>'}</div>
+    </details>`;
+  }).join('');
+
+  container.style.display = '';
+  container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${allOk ? '#2E7D32' : '#B23B2E'}">
+      ${allOk ? '✅' : '🛑'} ${escHtml(bannerText)}
+    </div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las 14 dimensiones${reg.editable ? ' (y corregir si hace falta)' : ''}</summary>
+      <div style="margin-top:8px">${rowsHtml}</div>
+    </details>
+  </div>`;
+}
+
+// Tablas Excel y Gráficos Predeterminados ya comparten resolveColIdx con
+// overrides reales — el panel ahí es editable. One Page usa otra arquitectura
+// (ítem por ítem vía findCol/itemTextCol, no resolveColIdx) así que por ahora
+// el panel ahí es de solo lectura (ver nota en ropProcess).
+rcpRegisterHealthCheck('R', 'r-healthcheck', true);
+rcpRegisterHealthCheck('RCP', 'rcp-healthcheck', true);
+rcpRegisterHealthCheck('ROP', 'rop-healthcheck', false);
 
 function rcpGenerate() {
   const def = RCP.currentDef;
@@ -9835,6 +9972,7 @@ function ropProcess(file) {
     document.getElementById('rop-upload-wrap').style.display = 'none';
     document.getElementById('rop-filters-wrap').style.display = 'block';
     document.getElementById('rop-preview').style.display = 'none';
+    rcpRenderHealthCheck('ROP');
   };
   reader.readAsBinaryString(file);
 }

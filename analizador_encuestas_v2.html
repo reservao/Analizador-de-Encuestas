@@ -5551,16 +5551,26 @@ function rcpIsDerivedCol(nh) { return RCP_DERIVED_PREFIX_RE.test(nh) || RCP_DERI
 // dimensión (Engagement/Agotamiento/cualquier palanca, siempre 1-6) — sin
 // importar cómo se llame. Cubre casos que el filtro por nombre no anticipa.
 // Se revisa sobre `rows` completo porque resolveColIdx no sabe qué subconjunto
-// se va a promediar después; solo decide qué COLUMNA corresponde.
+// se va a promediar después; solo decide qué COLUMNA corresponde. Cacheado por
+// (array de filas, índice de columna) — el panel de salud revisa las 14
+// dimensiones de una vez y varias pueden terminar probando la misma columna
+// candidata; sin esto se recorrían las filas completas una y otra vez. El
+// WeakMap se invalida solo al cargar un archivo nuevo (el array de filas
+// cambia de referencia).
+var RCP_DICHOTOMOUS_CACHE = new WeakMap();
 function rcpColIsDichotomous(rows, idx) {
   if (!rows || !rows.length || idx < 0) return false;
+  var cache = RCP_DICHOTOMOUS_CACHE.get(rows);
+  if (!cache) { cache = {}; RCP_DICHOTOMOUS_CACHE.set(rows, cache); }
+  if (idx in cache) return cache[idx];
   var sawAny = false;
   for (var i = 0; i < rows.length; i++) {
     var v = parseFloat(rows[i][idx]);
     if (isNaN(v)) continue;
-    if (v !== 0 && v !== 1) return false;
+    if (v !== 0 && v !== 1) { cache[idx] = false; return false; }
     sawAny = true;
   }
+  cache[idx] = sawAny;
   return sawAny;
 }
 
@@ -5589,14 +5599,21 @@ function colAliasLookup(nc, headers, normFn, rows) {
       var queryIsDerived = rcpIsDerivedCol(nc);
       idx = findLastIndex(headers, function(h, hi) {
         var nh = rcpSqueeze(normFn(h));
+        // El match de texto (barato) primero — rcpColIsDichotomous recorre
+        // TODA la base, así que solo vale la pena llamarlo para las pocas
+        // columnas que ya calzaron por nombre, no para las ~150 columnas del
+        // archivo completo en cada búsqueda (eso fue lo que hacía lenta la
+        // carga/filtrado de One Page cuando se agregó este guard).
+        var matches = aliases.some(function(a){
+          var na = rcpSqueeze(normFn(a));
+          return nh.startsWith(na) || nh.includes(na);
+        });
+        if (!matches) return false;
         if (!queryIsDerived) {
           if (rcpIsDerivedCol(nh)) return false;
           if (rcpColIsDichotomous(rows, hi)) return false;
         }
-        return aliases.some(function(a){
-          var na = rcpSqueeze(normFn(a));
-          return nh.startsWith(na) || nh.includes(na);
-        });
+        return true;
       });
     }
   }
@@ -5658,11 +5675,13 @@ function resolveColIdx(headers, query, overrides, rows) {
   return findLastIndex(headers, function(h, hi) {
     if (!binarySafe(h)) return false;
     var nh = rcpSqueeze(rcpNorm(h));
+    var matches = nh.startsWith(nc) || nh.endsWith(nc);
+    if (!matches) return false;
     if (!queryIsDerived3) {
       if (rcpIsDerivedCol(nh)) return false;
       if (rcpColIsDichotomous(rows, hi)) return false;
     }
-    return nh.startsWith(nc) || nh.endsWith(nc);
+    return true;
   });
 }
 

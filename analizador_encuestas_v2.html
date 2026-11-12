@@ -5527,6 +5527,18 @@ function findLastIndex(arr, pred) {
 // (ej. "oppor1") que sí calzaba por startsWith en el nivel flojo.
 function rcpSqueeze(s) { return s.replace(/[_\s()]/g,''); }
 
+// Una columna "derivada" (ALTO_X / BAJO_X / CRIT_X / OPT_X / X_BINARY / X_BYNARY /
+// X_PROPORTION) no debe calzar por aproximación cuando se busca el promedio
+// CONTINUO de una dimensión — solo si la búsqueda misma es explícitamente por
+// esa columna derivada. Bug real: con un alias corto como "eng" o una palabra
+// suelta como "agotamiento", "ALTO_ENGAGEMENT" y "ALTO_AGOTAMIENTO" calzaban
+// por startsWith/contains en el nivel aproximado cuando el archivo no traía
+// la columna de promedio real — "Gráfico por Pregunta" terminaba graficando
+// el flag binario (0/1) en vez del promedio 1-6 de Engagement/Agotamiento.
+var RCP_DERIVED_PREFIX_RE = /^(alto|bajo|crit|opt)/;
+var RCP_DERIVED_SUFFIX_RE = /(binary|bynary|binario|proportion)$/;
+function rcpIsDerivedCol(nh) { return RCP_DERIVED_PREFIX_RE.test(nh) || RCP_DERIVED_SUFFIX_RE.test(nh); }
+
 function colAliasLookup(nc, headers, normFn) {
   var idx = findLastIndex(headers, function(h) {
     return rcpSqueeze(normFn(h).split('-')[0]) === nc;
@@ -5549,8 +5561,10 @@ function colAliasLookup(nc, headers, normFn) {
       return aliases.some(function(a){ return nh === rcpSqueeze(normFn(a)); });
     });
     if (idx < 0) {
+      var queryIsDerived = rcpIsDerivedCol(nc);
       idx = findLastIndex(headers, function(h) {
         var nh = rcpSqueeze(normFn(h));
+        if (!queryIsDerived && rcpIsDerivedCol(nh)) return false;
         return aliases.some(function(a){
           var na = rcpSqueeze(normFn(a));
           return nh.startsWith(na) || nh.includes(na);
@@ -5595,6 +5609,7 @@ function resolveColIdx(headers, query, overrides) {
   // buscar el promedio de una dimensión, salvo que la búsqueda misma sea
   // explícitamente por eso: "dedicationbinary".startsWith("dedication").
   var queryWantsBinary = /binary|bynary|binario/i.test(nc);
+  var queryIsDerived3 = rcpIsDerivedCol(nc);
   var binarySafe = function(h) {
     if (!h) return false;
     var nh = rcpSqueeze(rcpNorm(h));
@@ -5615,6 +5630,7 @@ function resolveColIdx(headers, query, overrides) {
   return findLastIndex(headers, function(h) {
     if (!binarySafe(h)) return false;
     var nh = rcpSqueeze(rcpNorm(h));
+    if (!queryIsDerived3 && rcpIsDerivedCol(nh)) return false;
     return nh.startsWith(nc) || nh.endsWith(nc);
   });
 }
@@ -6661,6 +6677,7 @@ const RCP_VAR_DEFS = {
   EXHAUSTION:      [{ key:'EXHAUSTION',      label:'Agotamiento (promedio)' }],
   SELF_EFFICACY:   [{ key:'SELF_EFFICACY',   label:'Autoeficacia (promedio)' }],
   OPTIMISM:        [{ key:'OPTIMISM',        label:'Optimismo (promedio)' }],
+  eNPS_tag:        [{ key:'eNPS_tag',        label:'Categoría eNPS (Promotor/Neutro/Detractor)' }],
 };
 const RCP_FLAG_VAR_DEFS = [
   { key:'ALTO_ENGAGEMENT',   label:'Alto Engagement (binario)',  flag:'eng' },
@@ -6668,7 +6685,7 @@ const RCP_FLAG_VAR_DEFS = [
 ];
 // Gráficos que efectivamente leen el flag binario precalculado (vía
 // rcpEngAgoCtx/rcpCuadrante4SegGroups) — el resto solo usa el promedio.
-const RCP_FLAG_CHARTS = new Set(['eng_col', 'agot_col', 'cuadrante_4seg', 'cuadrante_4seg_rd']);
+const RCP_FLAG_CHARTS = new Set(['eng_col', 'agot_col', 'cuadrante_4seg', 'cuadrante_4seg_rd', 'demograficos']);
 
 // Las 12 palancas de Recursos y Demandas (mismas que ALL_DIMS dentro de
 // rcpGenerate, pero sin filtrar por si se encontraron — acá interesa mostrar
@@ -6690,7 +6707,7 @@ const RCP_PALANCAS_VAR_DEFS = [
 // Gráficos que usan las 12 palancas completas (no solo lo que liste
 // `requiere`, que para estos tipos quedó incompleto a propósito — ver
 // ALL_DIMS dentro de rcpGenerate).
-const RCP_FULL_PALANCAS_CHARTS = new Set(['recursos_demandas', 'optimo_critico', 'cuadrante_4seg_rd']);
+const RCP_FULL_PALANCAS_CHARTS = new Set(['recursos_demandas', 'optimo_critico', 'cuadrante_4seg_rd', 'demograficos']);
 // Estos dos clasifican SOLO con el flag binario (vía rcpCuadrante4SegGroups) —
 // el promedio continuo de Engagement/Agotamiento figura en `requiere` nomás
 // como chequeo de "deben existir estas columnas", pero el gráfico nunca lo
@@ -6744,10 +6761,34 @@ function rcpVarSelectHtml(key, selectedVal) {
   </select>`;
 }
 
+// "Gráfico por Pregunta" no tiene una lista fija de variables — depende de
+// cuál de las 14 dimensiones de R_DIMS esté seleccionada en el selector
+// propio del gráfico (#rcp_dim). Se arma un ítem dinámico para esa, usando
+// el mismo nombre de dimensión como clave de override (coincide con lo que
+// ya lee el bloque def.id==='grafico_por_pregunta').
+function rcpVarPanelItemsForPregunta() {
+  const dimName = rcpGetParam('dim') || '';
+  if (!dimName) return [];
+  const dimQ = R_DIMS.find(d => d.nombre === dimName);
+  if (!dimQ) return [];
+  // resolver propio: igual que el bloque real — primero el override manual
+  // (clave = nombre de dimensión), después cada candidato de dimQ.cols en
+  // orden. rcpColIdxFuzzy(nombre) a secas no alcanza porque el nombre de la
+  // dimensión no siempre es idéntico al primer candidato real.
+  const resolver = () => {
+    const forced = RCP.colOverrides && RCP.colOverrides[dimName];
+    if (forced) { const fIdx = RCP.headers.indexOf(forced); if (fIdx >= 0) return fIdx; }
+    if (RCP.colOverrides && Object.prototype.hasOwnProperty.call(RCP.colOverrides, dimName) && !forced) return -1;
+    for (const c of dimQ.cols) { const i = rcpColIdxFuzzy(c); if (i >= 0) return i; }
+    return -1;
+  };
+  return [{ key: dimName, label: dimName + ' (promedio)', resolver }];
+}
+
 function rcpRenderVarPanel(def) {
   const container = document.getElementById('rcp-varpanel');
   if (!container) return;
-  const items = rcpVarPanelItems(def);
+  const items = def.id === 'grafico_por_pregunta' ? rcpVarPanelItemsForPregunta() : rcpVarPanelItems(def);
   if (!RCP.headers || !RCP.headers.length || !items.length) { container.innerHTML=''; container.style.display='none'; return; }
   container.style.display = '';
   const rows = items.map(it => {
@@ -6757,7 +6798,7 @@ function rcpRenderVarPanel(def) {
       const d = rcpDescribeFlag(it.flag);
       displayHtml = d.col ? `<code>${escHtml(d.col)}</code>` : `<span style="color:var(--text2)">${escHtml(d.desc)}</span>`;
     } else {
-      const idx = rcpColIdxFuzzy(it.key);
+      const idx = it.resolver ? it.resolver() : rcpColIdxFuzzy(it.key);
       displayHtml = idx >= 0 ? `<code>${escHtml(RCP.headers[idx])}</code>` : `<span style="color:#B23B2E">no encontrada en esta base</span>`;
     }
     return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px;flex-wrap:wrap">
@@ -7572,7 +7613,13 @@ function rcpGenerate() {
     const sortVal = rcpGetParam('sort') || 'default';
     const alturaParam = parseInt(rcpGetParam('altura')) || 0;
 
-    let tagIdx = RCP.headers.findIndex(h=>/enps_cat|enps_tag|enps\.tag/i.test(h));
+    // Si hay un override manual para 'eNPS_tag' (panel "Columnas detectadas"),
+    // tiene prioridad sobre la detección por regex de abajo.
+    let tagIdx = -1;
+    if (RCP.colOverrides && Object.prototype.hasOwnProperty.call(RCP.colOverrides, 'eNPS_tag')) {
+      tagIdx = rcpColIdxFuzzy('eNPS_tag');
+    }
+    if(tagIdx<0) tagIdx = RCP.headers.findIndex(h=>/enps_cat|enps_tag|enps\.tag/i.test(h));
     if(tagIdx<0) tagIdx = rcpColIdxFuzzy('eNPS_tag');
     if(tagIdx<0) tagIdx = RCP.headers.findIndex(h=>/\benps\b/i.test(h));
 
@@ -8405,7 +8452,13 @@ Total: N=${q4s.n}`;
     // de prioridad que Tablas Excel (rDimMean).
     const allItemsQ = (dimQ.items || []).concat((dimQ.sub || []).flatMap(s => s.items));
     let dimAvgQ = null;
-    for (const c of dimQ.cols) { const v = rcpMean(rowsQ, c); if (v !== null) { dimAvgQ = v; break; } }
+    // Override manual (panel "Columnas detectadas") — clave = nombre de la
+    // dimensión (ej. "Engagement"), forzado por sobre las 3 prioridades de abajo.
+    const dimOverride = RCP.colOverrides && RCP.colOverrides[dimQ.nombre];
+    if (dimOverride) dimAvgQ = rcpMean(rowsQ, dimOverride);
+    if (dimAvgQ === null) {
+      for (const c of dimQ.cols) { const v = rcpMean(rowsQ, c); if (v !== null) { dimAvgQ = v; break; } }
+    }
     if (dimAvgQ === null && dimQ.sub && dimQ.sub.length) {
       const subVals = dimQ.sub.map(s => {
         for (const c of s.cols) { const v = rcpMean(rowsQ, c); if (v !== null) return v; }

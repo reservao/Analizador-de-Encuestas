@@ -7001,7 +7001,7 @@ function rcpGenerate() {
         layout: { padding: { bottom: 30, left: 5, right: 20 } },
         plugins: {
           title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { display: benchDatasets.length > 0, position:'bottom', labels:{font:{size:rcpFsAxis(11)},padding:14} },
+          legend: { display: benchDatasets.length > 0, position:'bottom', labels:{font:{size:rcpFsAxis(11)},color:'#333',padding:14} },
           tooltip: { callbacks: {
             label: ctx => {
               const n = nPerGroup[ctx.dataIndex];
@@ -7015,7 +7015,7 @@ function rcpGenerate() {
           x: {
             grid: { display: false },
             ticks: {
-              font: { size: 10 }, color: '#444',
+              font: { size: 10 }, color: '#333',
               maxRotation: 90, minRotation: 90, autoSkip: false,
               padding: 24,
               callback: function(val) {
@@ -7030,7 +7030,7 @@ function rcpGenerate() {
           y: {
             min: yMin, max: yMax,
             grid: { display:false }, border: { display:false },
-            ticks: { font:{size:rcpFsAxis(10)}, stepSize: isEng ? 1 : 0.5 }
+            ticks: { font:{size:rcpFsAxis(10)}, color:'#333', stepSize: isEng ? 1 : 0.5 }
           },
           y2: {
             position: 'right', min: 0, max: 100,
@@ -7063,7 +7063,7 @@ function rcpGenerate() {
             var bx  = bar.x;
             // N label below x-axis
             if(n !== null && n !== undefined) {
-              ctx.fillStyle = 'rgba(80,80,80,0.75)';
+              ctx.fillStyle = 'rgba(40,40,40,0.9)';
               ctx.font = rcpFsValue(9)+'px "DM Mono", monospace';
               ctx.textAlign = 'center'; ctx.textBaseline = 'top';
               ctx.fillText('N='+n, bx, chartArea.bottom + 8);
@@ -7204,14 +7204,14 @@ function rcpGenerate() {
         layout: { padding: { top: 24, bottom: 36, left: 24, right: 40 } },
         plugins: {
           title: { display: !rcpHideTitle, text: def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position: 'bottom', labels: { font:{size:rcpFsAxis(11)}, padding:14 } },
+          legend: { position: 'bottom', labels: { font:{size:rcpFsAxis(11)}, color:'#333', padding:14 } },
         },
         scales: {
           x: {
             grid: { display: false },
             offset: true,
             ticks: {
-              font: { size: 10 }, color: '#444',
+              font: { size: 10 }, color: '#333',
               maxRotation: 90, minRotation: 90, autoSkip: false, padding: 12,
               callback: function(val) {
                 var lbl = this.getLabelForValue(val) || '';
@@ -7225,7 +7225,7 @@ function rcpGenerate() {
           y: {
             min: 0, max: 6,
             grid: { display: false }, border: { display: false },
-            ticks: { font: { size: 10 } }
+            ticks: { font: { size: 10 }, color: '#333' }
           }
         },
         animation: { duration: 400 }
@@ -7498,7 +7498,7 @@ function rcpGenerate() {
         layout: { padding: { top: 16, bottom: 20, left: 5, right: 20 } },
         plugins: {
           title: { display: !rcpHideTitle, text:def.nombre, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14,
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, color:'#333', padding:14,
             generateLabels(chart) {
               return chart.data.datasets.map((ds,i)=>({
                 text: ds.label,
@@ -7516,7 +7516,7 @@ function rcpGenerate() {
           x: {
             grid: { display: false },
             ticks: {
-              font:{size:rcpFsAxis(10)}, color:'#444',
+              font:{size:rcpFsAxis(10)}, color:'#333',
               maxRotation:90, minRotation:90, autoSkip:false, padding:6,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
@@ -7526,7 +7526,7 @@ function rcpGenerate() {
               }
             }
           },
-          y: { min:1, max:5, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5} }
+          y: { min:1, max:5, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5,color:'#333'} }
         },
         animation: { duration:400 }
       },
@@ -7705,7 +7705,7 @@ function rcpGenerate() {
         if(!scaleY || !ca) return;
         ctx.save();
         ctx.font = 'italic '+rcpFsValue(10)+'px "DM Sans",sans-serif';
-        ctx.fillStyle = '#888';
+        ctx.fillStyle = '#333';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         nullRows.forEach(i => {
@@ -7751,7 +7751,7 @@ function rcpGenerate() {
       },
       plugins:{
         ...baseOpts.plugins,
-        legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, padding:14} },
+        legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, color:'#333', padding:14} },
         tooltip:{ callbacks:{ label: ctx=>{
           const state = RCP._enpsState;
           const n = state ? state.nPerGroup[ctx.dataIndex] : '';
@@ -7762,10 +7762,10 @@ function rcpGenerate() {
       },
       scales:{
         x:{ stacked:true, max:100, grid:{display:false}, border:{display:false},
-            ticks:{callback:v=>v+'%', font:{size:rcpFsAxis(10)}} },
+            ticks:{callback:v=>v+'%', font:{size:rcpFsAxis(10)}, color:'#333'} },
         y:{ stacked:true, grid:{display:false}, border:{display:false},
             ticks:{
-              font:{size:tickFontSize},
+              font:{size:tickFontSize}, color:'#333',
               callback: function(val) {
                 const lbl = this.getLabelForValue(val) || '';
                 if(lbl.length <= 26) return lbl;
@@ -7871,7 +7871,7 @@ function rcpGenerate() {
         if (!scaleY || !nArr.length) return;
         ctx.save();
         ctx.font = rcpFsValue(9)+'px "DM Mono", monospace';
-        ctx.fillStyle = 'rgba(80,80,80,0.72)';
+        ctx.fillStyle = 'rgba(40,40,40,0.9)';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         scaleY.ticks.forEach((tick, i) => {
@@ -7917,7 +7917,7 @@ function rcpGenerate() {
         layout:{ padding:{ top:16, bottom:16, left:0, right:44 } },
         plugins:{
           title:{ display: !rcpHideTitle, text:def.nombre+' — '+claLabel, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, padding:14} },
+          legend:{ display:true, position:'bottom', labels:{font:{size:rcpFsAxis(11)}, color:'#333', padding:14} },
           tooltip:{ callbacks:{ label: ctx => {
             const n = nPerGroupRC[ctx.dataIndex];
             return ctx.dataset.label+': '+(+ctx.raw).toFixed(2)+' (N='+n+')';
@@ -7926,9 +7926,9 @@ function rcpGenerate() {
         },
         scales:{
           x:{ min:scaleMin, max:scaleMax, grid:{display:false}, border:{display:false},
-              ticks:{font:{size:rcpFsAxis(10)}, stepSize:0.5} },
+              ticks:{font:{size:rcpFsAxis(10)}, stepSize:0.5, color:'#333'} },
           y:{ type:'category', grid:{display:false}, border:{display:false},
-              ticks:{ font:{size:tickFs},
+              ticks:{ font:{size:tickFs}, color:'#333',
                 callback: function(val) {
                   const lbl = this.getLabelForValue(val) || '';
                   if(lbl.length <= 24) return lbl;
@@ -8080,14 +8080,14 @@ function rcpGenerate() {
         layout: { padding: { top:16, bottom:20, left:5, right:20 } },
         plugins: {
           title: { display: !rcpHideTitle, text:ocTitle, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14 } },
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, color:'#333', padding:14 } },
           tooltip: { callbacks:{ label: ctx=>ctx.dataset.label+': '+(ctx.raw!==null?(+ctx.raw).toFixed(2):'—') } },
         },
         scales: {
           x: {
             grid: { display:false }, border: { display:false },
             ticks: {
-              font:{size:rcpFsAxis(10)}, color:'#444',
+              font:{size:rcpFsAxis(10)}, color:'#333',
               maxRotation:90, minRotation:90, autoSkip:false, padding:6,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
@@ -8097,7 +8097,7 @@ function rcpGenerate() {
               }
             }
           },
-          y: { min:scaleOCMin, max:scaleOCMax, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5} }
+          y: { min:scaleOCMin, max:scaleOCMax, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},stepSize:0.5,color:'#333'} }
         },
         animation: { duration:400 }
       },
@@ -8353,14 +8353,14 @@ Total: N=${q4s.n}`;
         layout: { padding: { top: 20, bottom: 36, left: 10, right: 20 } },
         plugins: {
           title: { display: !rcpHideTitle, text: titleRd4s, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12} },
-          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, padding:14 } },
+          legend: { position:'bottom', labels:{ font:{size:rcpFsAxis(11)}, color:'#333', padding:14 } },
           tooltip: { callbacks: { label: ctx => ctx.dataset.label.replace(/\s*\(N=\d+\)$/,'') + ': ' + (ctx.parsed.y!=null ? ctx.parsed.y.toFixed(2) : '—') } },
         },
         scales: {
           x: {
             grid:{display:false},
             ticks:{
-              font:{size:rcpFsAxis(10)}, maxRotation:90, minRotation:90, autoSkip:false,
+              font:{size:rcpFsAxis(10)}, color:'#333', maxRotation:90, minRotation:90, autoSkip:false,
               callback: function(val) {
                 var lbl=this.getLabelForValue(val)||'';
                 var words=lbl.split(' '), lines=[];
@@ -8369,7 +8369,7 @@ Total: N=${q4s.n}`;
               }
             }
           },
-          y: { min:1, max:6, grid:{color:'rgba(0,0,0,.05)'}, ticks:{ stepSize:1, font:{size:rcpFsAxis(10)} } },
+          y: { min:1, max:6, grid:{color:'rgba(0,0,0,.05)'}, ticks:{ stepSize:1, font:{size:rcpFsAxis(10)}, color:'#333' } },
         },
         animation: { duration: 400 },
       },
@@ -8536,11 +8536,11 @@ Total: N=${q4s.n}`;
           tooltip: { callbacks: { label: ctx => ctx.parsed.x!=null ? ctx.parsed.x.toFixed(2) : '—' } },
         },
         scales: {
-          x: { min: scaleMinQ, max: scaleMaxQ, grid:{display:false}, border:{display:false}, ticks:{font:{size:FONT_BASE_Q.xtick}} },
+          x: { min: scaleMinQ, max: scaleMaxQ, grid:{display:false}, border:{display:false}, ticks:{font:{size:FONT_BASE_Q.xtick},color:'#333'} },
           y: {
             grid:{display:false}, border:{display:false},
             ticks: {
-              font: { size: FONT_BASE_Q.ytick },
+              font: { size: FONT_BASE_Q.ytick }, color:'#333',
               callback: function(val) {
                 const lbl = this.getLabelForValue(val) || '';
                 return rcpPregWrapLabel(lbl, WRAP_LEN_Q);
@@ -8807,11 +8807,11 @@ function rcpBaseOptions(title, stacked, yAxis) {
     responsive:true, maintainAspectRatio:false,
     plugins:{
       title:{display: !!title && !document.getElementById('rcp_hide_title')?.checked, text:title, font:{size:rcpFsTitle(14),weight:'bold'}, color:'#1A1916', padding:{bottom:12}},
-      legend:{position:'bottom', labels:{font:{size:rcpFsAxis(11)},padding:14}},
+      legend:{position:'bottom', labels:{font:{size:rcpFsAxis(11)},color:'#333',padding:14}},
     },
     scales:{
-      x:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)}}},
-      y:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},callback:yAxis?.callback||undefined},
+      x:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},color:'#333'}},
+      y:{stacked:!!stacked, grid:{display:false}, border:{display:false}, ticks:{font:{size:rcpFsAxis(10)},color:'#333',callback:yAxis?.callback||undefined},
          min:yAxis?.min, max:yAxis?.max}
     },
     animation:{duration:400}
@@ -10320,7 +10320,7 @@ const ropConfidentialPlugin = {
         ctx.fillRect(bx, cy - bh/2, bw, bh);
         ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
         ctx.strokeRect(bx, cy - bh/2, bw, bh);
-        ctx.fillStyle = '#666';
+        ctx.fillStyle = '#333';
         ctx.font = 'italic 11px Inter,sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(`${line1} ${line2}`, bx + bw/2, cy);
@@ -10339,7 +10339,7 @@ const ropConfidentialPlugin = {
         ctx.fillRect(bx, by, bw, bh);
         ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
         ctx.strokeRect(bx, by, bw, bh);
-        ctx.fillStyle = '#666';
+        ctx.fillStyle = '#333';
         ctx.font = 'italic 10px Inter,sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(line1, cx, by + 13);
@@ -10542,7 +10542,7 @@ const ropEnpsBadgePlugin = {
       ctx.restore();
     });
     ctx.save();
-    ctx.fillStyle = '#555';
+    ctx.fillStyle = '#333';
     ctx.font = 'bold 10px Inter,sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('eNPS', chartArea.right + xOff, chartArea.bottom + 16);
@@ -10589,9 +10589,9 @@ function ropRenderEng(filterSets, showOrg) {
       plugins:{ legend:{display:false},
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '—' } } },
       scales:{
-        y:{ min:0, max:6, ticks:{stepSize:1,font:{size:11}}, grid:{color:'rgba(0,0,0,.05)'} },
+        y:{ min:0, max:6, ticks:{stepSize:1,font:{size:11},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:{size:11}} }
+        x:{ grid:{display:false}, ticks:{font:{size:11},color:'#333'} }
       }
     }
   });
@@ -10632,9 +10632,9 @@ function ropRenderAgot(filterSets, showOrg) {
       plugins:{ legend:{display:false},
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '—' } } },
       scales:{
-        y:{ min:1, max:4, ticks:{stepSize:1,font:{size:11}}, grid:{color:'rgba(0,0,0,.05)'} },
+        y:{ min:1, max:4, ticks:{stepSize:1,font:{size:11},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:{size:11}} }
+        x:{ grid:{display:false}, ticks:{font:{size:11},color:'#333'} }
       }
     }
   });
@@ -10775,7 +10775,7 @@ function ropRenderRD(filterSets) {
         legend:{
           display:true, position:'top',
           labels:{
-            font:{size:10}, boxWidth:28, padding:10, usePointStyle:true,
+            font:{size:10}, color:'#333', boxWidth:28, padding:10, usePointStyle:true,
             pointStyleWidth:24,
             filter: (item, data) => {
               const ds = data.datasets[item.datasetIndex];
@@ -10787,8 +10787,8 @@ function ropRenderRD(filterSets) {
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` : '—' } }
       },
       scales:{
-        y:{ min:1, max:5, ticks:{stepSize:1,font:{size:10}}, grid:{color:'rgba(0,0,0,.05)'} },
-        x:{ grid:{display:false}, ticks:{font:{size:8}, maxRotation:40, minRotation:20, autoSkip:false} }
+        y:{ min:1, max:5, ticks:{stepSize:1,font:{size:10},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
+        x:{ grid:{display:false}, ticks:{font:{size:8}, color:'#333', maxRotation:40, minRotation:20, autoSkip:false} }
       }
     }
   });
@@ -10827,13 +10827,13 @@ function ropRenderENPS(filterSets) {
       plugins:{
         legend:{
           display:true, position:'bottom',
-          labels:{ font:{size:11}, boxWidth:10, padding:6 }
+          labels:{ font:{size:11}, color:'#333', boxWidth:10, padding:6 }
         },
         tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: ${ctx.parsed.x.toFixed(1)}%` } }
       },
       scales:{
-        x:{ stacked:true, min:0, max:100, ticks:{callback:v=>v+'%', font:{size:11}}, grid:{display:false}, border:{display:false} },
-        y:{ stacked:true, ticks:{font:{size:11}}, grid:{display:false}, border:{display:false} }
+        x:{ stacked:true, min:0, max:100, ticks:{callback:v=>v+'%', font:{size:11}, color:'#333'}, grid:{display:false}, border:{display:false} },
+        y:{ stacked:true, ticks:{font:{size:11},color:'#333'}, grid:{display:false}, border:{display:false} }
       }
     }
   });

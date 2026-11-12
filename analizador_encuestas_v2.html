@@ -4791,7 +4791,7 @@ function rcColIdx(col) {
 // junto a RCP) — antes solo tenía 2 niveles (exacto + alias, sin el nivel 3
 // de búsqueda aproximada que sí tienen los otros dos módulos).
 function rColIdxFuzzy(name) {
-  return resolveColIdx(RC.headers, name, RC.colOverrides);
+  return resolveColIdx(RC.headers, name, RC.colOverrides, RC.rows);
 }
 
 function rcMean(rows, col) {
@@ -5539,7 +5539,26 @@ var RCP_DERIVED_PREFIX_RE = /^(alto|bajo|crit|opt)/;
 var RCP_DERIVED_SUFFIX_RE = /(binary|bynary|binario|proportion)$/;
 function rcpIsDerivedCol(nh) { return RCP_DERIVED_PREFIX_RE.test(nh) || RCP_DERIVED_SUFFIX_RE.test(nh); }
 
-function colAliasLookup(nc, headers, normFn) {
+// Complemento por DATO (no por nombre) al guard de arriba: una columna cuyos
+// valores son solo 0/1 en TODA la base (no en el subconjunto filtrado que se
+// esté promediando en este momento) no puede ser el promedio continuo de una
+// dimensión (Engagement/Agotamiento/cualquier palanca, siempre 1-6) — sin
+// importar cómo se llame. Cubre casos que el filtro por nombre no anticipa.
+// Se revisa sobre `rows` completo porque resolveColIdx no sabe qué subconjunto
+// se va a promediar después; solo decide qué COLUMNA corresponde.
+function rcpColIsDichotomous(rows, idx) {
+  if (!rows || !rows.length || idx < 0) return false;
+  var sawAny = false;
+  for (var i = 0; i < rows.length; i++) {
+    var v = parseFloat(rows[i][idx]);
+    if (isNaN(v)) continue;
+    if (v !== 0 && v !== 1) return false;
+    sawAny = true;
+  }
+  return sawAny;
+}
+
+function colAliasLookup(nc, headers, normFn, rows) {
   var idx = findLastIndex(headers, function(h) {
     return rcpSqueeze(normFn(h).split('-')[0]) === nc;
   });
@@ -5562,9 +5581,12 @@ function colAliasLookup(nc, headers, normFn) {
     });
     if (idx < 0) {
       var queryIsDerived = rcpIsDerivedCol(nc);
-      idx = findLastIndex(headers, function(h) {
+      idx = findLastIndex(headers, function(h, hi) {
         var nh = rcpSqueeze(normFn(h));
-        if (!queryIsDerived && rcpIsDerivedCol(nh)) return false;
+        if (!queryIsDerived) {
+          if (rcpIsDerivedCol(nh)) return false;
+          if (rcpColIsDichotomous(rows, hi)) return false;
+        }
         return aliases.some(function(a){
           var na = rcpSqueeze(normFn(a));
           return nh.startsWith(na) || nh.includes(na);
@@ -5585,7 +5607,7 @@ function colAliasLookup(nc, headers, normFn) {
 // cuando hay duplicados exactos") solo quedaba aplicado donde se hizo el
 // cambio a mano. Ahora hay un solo lugar: arreglar acá arregla los 3 módulos
 // a la vez.
-function resolveColIdx(headers, query, overrides) {
+function resolveColIdx(headers, query, overrides, rows) {
   // Override manual del usuario (panel "Columnas detectadas") — tiene prioridad
   // absoluta sobre cualquier detección automática. Clave = el mismo string que
   // se busca (ej. 'WORK_ENGAGEMENT', 'ALTO_ENGAGEMENT', 'WE1').
@@ -5601,7 +5623,7 @@ function resolveColIdx(headers, query, overrides) {
   // Nivel 2: tabla de alias compartida (RCP_COL_ALIASES — variantes de
   // plataforma y español, ej. "colaboracion"→SOCIAL_SUPPORT)
   var nc = rcpSqueeze(rcpNorm(query));
-  idx = colAliasLookup(nc, headers, rcpNorm);
+  idx = colAliasLookup(nc, headers, rcpNorm, rows);
   if (idx >= 0) return idx;
   // Nivel 3: fuzzy — el encabezado contiene el nombre como parte de su token.
   // Maneja formatos como "(WE1-1.5)", "Promedio Engagement", "WORK_ENGAGEMENT_D9".
@@ -5627,10 +5649,13 @@ function resolveColIdx(headers, query, overrides) {
     return parts.some(function(p) { return rcpSqueeze(rcpNorm(p)) === nc; });
   });
   if (idx3 >= 0) return idx3;
-  return findLastIndex(headers, function(h) {
+  return findLastIndex(headers, function(h, hi) {
     if (!binarySafe(h)) return false;
     var nh = rcpSqueeze(rcpNorm(h));
-    if (!queryIsDerived3 && rcpIsDerivedCol(nh)) return false;
+    if (!queryIsDerived3) {
+      if (rcpIsDerivedCol(nh)) return false;
+      if (rcpColIsDichotomous(rows, hi)) return false;
+    }
     return nh.startsWith(nc) || nh.endsWith(nc);
   });
 }
@@ -5640,7 +5665,7 @@ function rcpColIdx(col) {
 }
 
 function rcpColIdxFuzzy(col) {
-  return resolveColIdx(RCP.headers, col, RCP.colOverrides);
+  return resolveColIdx(RCP.headers, col, RCP.colOverrides, RCP.rows);
 }
 // Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido
 // (ITEM_CODE_TEXTS, definido junto a findCol) — para archivos que traen el texto de la
@@ -9149,7 +9174,7 @@ function rFindHdrCol(candidates) {
 // ningún arreglo hecho del lado de Gráficos. R.colOverrides queda disponible
 // para cuando Tablas Excel tenga su propio panel de override manual.
 function rColIdx(name) {
-  return resolveColIdx(R.headers, name, R.colOverrides);
+  return resolveColIdx(R.headers, name, R.colOverrides, R.rows);
 }
 
 // Busca un ítem WE/EX por código y, si no lo encuentra, por su texto literal conocido

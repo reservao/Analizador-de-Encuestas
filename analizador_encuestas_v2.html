@@ -7054,13 +7054,15 @@ function rcpRenderHealthCheck(moduleTag) {
   </div>`;
 }
 
-// Tablas Excel y Gráficos Predeterminados ya comparten resolveColIdx con
-// overrides reales — el panel ahí es editable. One Page usa otra arquitectura
-// (ítem por ítem vía findCol/itemTextCol, no resolveColIdx) así que por ahora
-// el panel ahí es de solo lectura (ver nota en ropProcess).
+// Tablas Excel y Gráficos Predeterminados comparten resolveColIdx con
+// overrides reales — el panel ahí es editable con rcpRenderHealthCheck/R_DIMS.
+// One Page usa otra arquitectura (catálogo MAESTRO, resolución ítem por ítem
+// vía ropFindCol/ropItemTextCol/ropFindSysCol, no resolveColIdx/R_DIMS), así
+// que tiene su propio panel — ropRenderHealthCheck — más abajo, cerca de
+// ropCalcDim/ropCalcEng/ropCalcAgot, para que las claves de override que
+// muestra sean exactamente las que esos wrappers leen.
 rcpRegisterHealthCheck('R', 'r-healthcheck', true);
 rcpRegisterHealthCheck('RCP', 'rcp-healthcheck', true);
-rcpRegisterHealthCheck('ROP', 'rop-healthcheck', false);
 
 function rcpGenerate() {
   const def = RCP.currentDef;
@@ -10020,7 +10022,8 @@ function rBuildEnpsSheet(rowsByMed, enpsTagIdx, claIdx1, claIdx2, empresa) {
 let ROP = {
   headers:[], rows:[], mediciones:[], clasCols:[],
   filters: [],
-  charts:{ eng:null, agot:null, rd:null, enps:null }
+  charts:{ eng:null, agot:null, rd:null, enps:null },
+  colOverrides: {}
 };
 
 const ROP_RECURSOS = ['oportunidades','coaching','retroalimentacion','colaboracion','autonomia','optimismo','autoeficacia'];
@@ -10048,7 +10051,7 @@ function ropProcess(file, sheetName) {
     document.getElementById('rop-upload-wrap').style.display = 'none';
     document.getElementById('rop-filters-wrap').style.display = 'block';
     document.getElementById('rop-preview').style.display = 'none';
-    rcpRenderHealthCheck('ROP');
+    ropRenderHealthCheck();
     // ropProcess parsea el workbook adentro de un callback async (a diferencia
     // de R/RCP/RC, que lo reciben ya parseado) — el registro del selector de
     // hoja se arma acá directo en vez de con sheetPickerLoad(), porque el wb
@@ -10327,14 +10330,43 @@ function ropFilterRows(rows, medicion, clasificaciones) {
   return r;
 }
 
+// ── Overrides manuales para One Page ────────────────────────────────────────
+// A diferencia de R/RCP/RC (que comparten resolveColIdx), One Page arma sus
+// promedios ítem por ítem vía findCol()/itemTextCol() (catálogo MAESTRO, no
+// R_DIMS) y findSysCol() para la columna pre-calculada de respaldo. Estos 3
+// wrappers son el único cambio necesario para que ROP.colOverrides (mismo
+// panel "Columnas detectadas", ahora editable acá) se respete de verdad en el
+// cálculo real — cada ítem usa su código (ej. 'WE1') como clave, y cada
+// columna de respaldo usa 'DIM:'+dim.id (ej. 'DIM:engagement') para no chocar
+// con un ítem que por casualidad se llame igual al id de una dimensión.
+function ropFindCol(q) {
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, q)) {
+    return ROP.colOverrides[q] || null;
+  }
+  return findCol(q, ROP.headers);
+}
+function ropItemTextCol(q) {
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, q)) {
+    return ROP.colOverrides[q] || null;
+  }
+  return itemTextCol(q, ROP.headers);
+}
+function ropFindSysCol(dim) {
+  const key = 'DIM:' + dim.id;
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, key)) {
+    return ROP.colOverrides[key] || null;
+  }
+  return findSysCol(dim, ROP.headers);
+}
+
 function ropCalcDim(dimId, rows) {
   const dim = MAESTRO.find(d => d.id === dimId);
   if (!dim) return null;
-  let qCols = dim.preguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
-  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let qCols = dim.preguntas.map(q => ropFindCol(q)).filter(Boolean);
+  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => ropFindCol(q)).filter(Boolean);
   if (!qCols.length) {
     // Fallback: usar columna pre-calculada cuando no hay ítems individuales
-    const sysCol = findSysCol(dim, ROP.headers);
+    const sysCol = ropFindSysCol(dim);
     if (!sysCol) return null;
     const idx = ROP.headers.indexOf(sysCol);
     const vals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v));
@@ -10351,8 +10383,8 @@ function ropCalcDim(dimId, rows) {
 function ropCalcEng(rows) {
   const dim = MAESTRO.find(d => d.id === 'engagement');
   if (!dim) return {avg:null, pct:null};
-  let qCols = dim.preguntas.map(q => itemTextCol(q, ROP.headers)).filter(Boolean);
-  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let qCols = dim.preguntas.map(q => ropItemTextCol(q)).filter(Boolean);
+  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => ropFindCol(q)).filter(Boolean);
 
   // Promedio general (todos los ítems / columna pre-calculada)
   let avg = null;
@@ -10363,7 +10395,7 @@ function ropCalcEng(rows) {
     }).filter(v => v !== null);
     if (vals.length) avg = vals.reduce((a,b)=>a+b,0)/vals.length;
   } else {
-    const sysCol = findSysCol(dim, ROP.headers);
+    const sysCol = ropFindSysCol(dim);
     if (sysCol) {
       const idx = ROP.headers.indexOf(sysCol);
       const vals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v));
@@ -10382,7 +10414,7 @@ function ropCalcEng(rows) {
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
   } else {
     const subGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
-    const subCols = subGroups.map(g => g.map(q => itemTextCol(q, ROP.headers)).filter(Boolean));
+    const subCols = subGroups.map(g => g.map(q => ropItemTextCol(q)).filter(Boolean));
     if (subCols.every(g => g.length) && rows.length) {
       const count = rows.filter(r => subCols.every(cols => {
         const vs = cols.map(c => parseFloat(r[ROP.headers.indexOf(c)])).filter(v => !isNaN(v));
@@ -10397,8 +10429,8 @@ function ropCalcEng(rows) {
 function ropCalcAgot(rows) {
   const dim = MAESTRO.find(d => d.id === 'agotamiento');
   if (!dim) return {avg:null, pct:null};
-  let qCols = dim.preguntas.map(q => itemTextCol(q, ROP.headers)).filter(Boolean);
-  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let qCols = dim.preguntas.map(q => ropItemTextCol(q)).filter(Boolean);
+  if (!qCols.length && dim.altPreguntas) qCols = dim.altPreguntas.map(q => ropFindCol(q)).filter(Boolean);
 
   // Promedio general (todos los ítems / columna pre-calculada)
   let avg = null;
@@ -10409,7 +10441,7 @@ function ropCalcAgot(rows) {
     }).filter(v => v !== null);
     if (vals.length) avg = vals.reduce((a,b)=>a+b,0)/vals.length;
   } else {
-    const sysCol = findSysCol(dim, ROP.headers);
+    const sysCol = ropFindSysCol(dim);
     if (sysCol) {
       const idx = ROP.headers.indexOf(sysCol);
       const vals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v));
@@ -10435,6 +10467,127 @@ function ropCalcAgot(rows) {
     if (vals.length) pct = vals.filter(v => v >= 3.25).length / vals.length * 100;
   }
   return {avg, pct};
+}
+
+// ── Panel "Columnas detectadas" de One Page (MAESTRO) ───────────────────────
+// Espejo de rcpHealthCheckDim/rcpRenderHealthCheck, pero sobre el catálogo que
+// ROP usa de verdad (MAESTRO) y con la misma prioridad exacta de
+// ropCalcDim/ropCalcEng/ropCalcAgot: ítems (ropFindCol, o ropItemTextCol para
+// Engagement/Agotamiento) → ítems alternativos (altPreguntas) → columna
+// pre-calculada de respaldo (ropFindSysCol). Las claves de override son el
+// código del ítem (ej. 'WE1') o 'DIM:'+dim.id para la columna de respaldo —
+// exactamente lo que ropFindCol/ropItemTextCol/ropFindSysCol leen.
+function ropHealthCheckDim(dim) {
+  const useItemText = dim.id === 'engagement' || dim.id === 'agotamiento';
+  const resolver = useItemText ? ropItemTextCol : ropFindCol;
+  let itemResults = (dim.preguntas || []).map(code => {
+    const col = resolver(code);
+    return { code, text: null, found: !!col, colName: col };
+  });
+  let usedAlt = false;
+  if (!itemResults.some(i => i.found) && dim.altPreguntas && dim.altPreguntas.length) {
+    itemResults = dim.altPreguntas.map(code => {
+      const col = ropFindCol(code);
+      return { code, text: null, found: !!col, colName: col };
+    });
+    usedAlt = true;
+  }
+  const foundItems = itemResults.filter(i => i.found).length;
+  if (foundItems > 0) {
+    return { ok: true, partial: foundItems < itemResults.length, via: usedAlt ? 'altitems' : 'items', colName: null, itemResults, foundItems, totalItems: itemResults.length };
+  }
+  const sysCol = ropFindSysCol(dim);
+  if (sysCol) return { ok: true, via: 'column', colName: sysCol, itemResults };
+  return { ok: false, via: 'none', colName: null, itemResults };
+}
+
+function ropHealthSetOverride(key, value) {
+  if (!ROP.colOverrides) ROP.colOverrides = {};
+  if (value) ROP.colOverrides[key] = value; else delete ROP.colOverrides[key];
+  ropRenderHealthCheck();
+}
+
+function ropRenderHealthCheck() {
+  const container = document.getElementById('rop-healthcheck');
+  if (!container) return;
+  if (!ROP.headers || !ROP.headers.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  const headers = ROP.headers, overrides = ROP.colOverrides || {};
+  const dims = MAESTRO.filter(d => d.id !== 'enps');
+  const results = dims.map(dim => ({ dim, r: ropHealthCheckDim(dim) }));
+  const enpsOk = !!(ROP.rows && ROP.rows.length && ropCalcEnps(ROP.rows));
+  const okCount = results.filter(x => x.r.ok).length + (enpsOk ? 1 : 0);
+  const total = results.length + 1;
+  const allOk = okCount === total;
+  const bannerText = allOk
+    ? `Las ${total} dimensiones se detectaron correctamente`
+    : `${total - okCount} de ${total} dimensiones con problemas — revisa el detalle`;
+
+  const rowsHtml = results.map(({ dim, r }) => {
+    const icon = r.ok ? '✓' : (r.partial ? '⚠' : '✗');
+    const iconColor = r.ok ? '#2E7D32' : (r.partial ? '#B8860B' : '#B23B2E');
+    let detail;
+    if (r.ok && r.colName) detail = `<code>${escHtml(r.colName)}</code> <span style="color:var(--text2)">(columna pre-calculada)</span>`;
+    else if (r.ok && !r.partial) detail = `<span style="color:var(--text2)">calculado desde ${r.itemResults.length} ítems${r.via === 'altitems' ? ' (alternativos)' : ''}</span>`;
+    else if (r.partial) detail = `<span style="color:#B8860B">solo ${r.foundItems} de ${r.totalItems} ítems encontrados</span>`;
+    else detail = `<span style="color:#B23B2E">no encontrada</span>`;
+
+    const itemsDetailRows = r.itemResults.map(it => {
+      const iIcon = it.found ? '✓' : '✗';
+      const iColor = it.found ? '#2E7D32' : '#B23B2E';
+      const overrideSel = `<select onchange="ropHealthSetOverride('${escJsAttr(it.code)}', this.value)"
+        style="font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[it.code] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>`;
+      return `<div style="display:flex;gap:8px;align-items:center;font-size:11px;padding:2px 0;flex-wrap:wrap">
+        <span style="color:${iColor};width:14px;flex-shrink:0">${iIcon}</span>
+        <span style="color:var(--text2);flex:0 0 65px">${escHtml(it.code)}</span>
+        <span style="flex:1;min-width:140px;color:${it.found ? 'var(--text)' : 'var(--text2)'}">${escHtml(it.found ? it.colName : '(no encontrada)')}</span>
+        ${overrideSel}
+      </div>`;
+    }).join('');
+
+    const sysKey = 'DIM:' + dim.id;
+    const sysOverrideHtml = `
+      <select onchange="ropHealthSetOverride('${escJsAttr(sysKey)}', this.value)"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[sysKey] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>`;
+
+    return `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+        <span style="color:${iconColor};width:14px;flex-shrink:0">${icon}</span>
+        <span style="flex:0 0 190px">${escHtml(dim.nombre)}</span>
+        <span style="flex:1;min-width:140px">${detail}</span>
+      </summary>
+      <div style="padding:6px 0 6px 24px">
+        ${itemsDetailRows}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--text2)">
+          <span>Columna de respaldo (si no hay ítems):</span>${sysOverrideHtml}
+        </div>
+      </div>
+    </details>`;
+  }).join('');
+
+  const enpsIcon = enpsOk ? '✓' : '✗';
+  const enpsColor = enpsOk ? '#2E7D32' : '#B23B2E';
+  const enpsRow = `<div style="border-bottom:1px solid var(--border);padding:8px 0;display:flex;align-items:center;gap:10px;font-size:12px">
+    <span style="color:${enpsColor};width:14px;flex-shrink:0">${enpsIcon}</span>
+    <span style="flex:0 0 190px">eNPS</span>
+    <span style="flex:1;color:var(--text2)">${enpsOk ? 'detectado' : 'no encontrado — revisa que exista una columna con la pregunta de recomendación (escala 0-10)'}</span>
+  </div>`;
+
+  container.style.display = '';
+  container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${allOk ? '#2E7D32' : '#B23B2E'}">
+      ${allOk ? '✅' : '🛑'} ${escHtml(bannerText)}
+    </div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las ${total} dimensiones (y corregir si hace falta)</summary>
+      <div style="margin-top:8px">${rowsHtml}${enpsRow}</div>
+    </details>
+  </div>`;
 }
 
 function ropCalcEnps(rows) {
@@ -10948,13 +11101,13 @@ function ropGetOptimalRows(rows) {
   const engDim  = MAESTRO.find(d => d.id === 'engagement');
   const agotDim = MAESTRO.find(d => d.id === 'agotamiento');
   if (!engDim || !agotDim) return null;
-  let engCols  = engDim.preguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
-  if (!engCols.length && engDim.altPreguntas) engCols = engDim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
-  let agotCols = agotDim.preguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
-  if (!agotCols.length && agotDim.altPreguntas) agotCols = agotDim.altPreguntas.map(q => findCol(q, ROP.headers)).filter(Boolean);
+  let engCols  = engDim.preguntas.map(q => ropFindCol(q)).filter(Boolean);
+  if (!engCols.length && engDim.altPreguntas) engCols = engDim.altPreguntas.map(q => ropFindCol(q)).filter(Boolean);
+  let agotCols = agotDim.preguntas.map(q => ropFindCol(q)).filter(Boolean);
+  if (!agotCols.length && agotDim.altPreguntas) agotCols = agotDim.altPreguntas.map(q => ropFindCol(q)).filter(Boolean);
   // Fallback: usar columnas pre-calculadas si no hay ítems individuales
-  const engSys  = !engCols.length  ? findSysCol(engDim,  ROP.headers) : null;
-  const agotSys = !agotCols.length ? findSysCol(agotDim, ROP.headers) : null;
+  const engSys  = !engCols.length  ? ropFindSysCol(engDim) : null;
+  const agotSys = !agotCols.length ? ropFindSysCol(agotDim) : null;
   if (!engCols.length  && !engSys)  return null;
   if (!agotCols.length && !agotSys) return null;
   const scored = rows.map(r => {

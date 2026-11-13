@@ -1026,6 +1026,7 @@ tr:hover td { background: var(--bg); }
       </div>
     </div>
 
+    <div id="r-sheetpicker" style="display:none"></div>
     <div id="r-healthcheck" style="display:none"></div>
 
     <!-- Paso B: Seleccionar mediciones -->
@@ -1110,6 +1111,7 @@ tr:hover td { background: var(--bg); }
               <button class="btn btn-secondary btn-sm" onclick="rcpReset()">↩ Cambiar archivo</button>
             </div>
           </div>
+          <div id="rcp-sheetpicker" style="display:none"></div>
           <div id="rcp-healthcheck" style="display:none"></div>
           <div class="slbl" style="margin-top:0">Selecciona el gráfico a generar</div>
           <div id="rcp-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem"></div>
@@ -1187,6 +1189,7 @@ tr:hover td { background: var(--bg); }
             </div>
             <button class="btn btn-secondary btn-sm" onclick="rcReset()">↩ Cambiar archivo</button>
           </div>
+          <div id="rc-sheetpicker" style="display:none"></div>
 
           <!-- 1. Tipo de gráfico -->
           <div class="slbl" style="margin-top:0">1. Tipo de gráfico</div>
@@ -1312,6 +1315,7 @@ tr:hover td { background: var(--bg); }
         </div>
       </div>
 
+      <div id="rop-sheetpicker" style="display:none"></div>
       <div id="rop-healthcheck" style="display:none"></div>
 
       <!-- Paso 2: Filtros -->
@@ -4523,14 +4527,9 @@ function rFindCol(keywords, headers) {
   return null;
 }
 
-function rProcess(wb, filename) {
-  // Find the BBDD sheet (biggest one)
-  let bestSheet = wb.SheetNames[0], bestRows = 0;
-  for (const sn of wb.SheetNames) {
-    const ws = wb.Sheets[sn];
-    const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
-    if (json.length > bestRows) { bestRows = json.length; bestSheet = sn; }
-  }
+function rProcess(wb, filename, sheetName) {
+  // Hoja elegida manualmente (selector) o detectada automáticamente (la de más filas)
+  const bestSheet = sheetName || pickBestSheet(wb);
   const ws = wb.Sheets[bestSheet];
   const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
   R.headers = json[0].map(String);
@@ -4855,13 +4854,8 @@ function rcGetVal(rows, varDef) {
   return rcMean(rows, varDef.col);
 }
 
-function rcProcess(wb, filename) {
-  let bestSheet = wb.SheetNames[0], bestRows = 0;
-  for (const sn of wb.SheetNames) {
-    const ws = wb.Sheets[sn];
-    const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-    if (json.length > bestRows) { bestRows = json.length; bestSheet = sn; }
-  }
+function rcProcess(wb, filename, sheetName) {
+  const bestSheet = sheetName || pickBestSheet(wb);
   const ws = wb.Sheets[bestSheet];
   const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
   if (!json || !json.length || !json[0] || !json[0].length) {
@@ -5293,7 +5287,7 @@ function rcLoadFile(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onerror = () => alert('Error leyendo el archivo. Verifica que no esté dañado.');
-  reader.onload = ev => rcProcess(XLSX.read(ev.target.result,{type:'array'}), f.name);
+  reader.onload = ev => sheetPickerLoad('RC','rc-sheetpicker',XLSX.read(ev.target.result,{type:'array'}), f.name, rcProcess);
   reader.readAsArrayBuffer(f);
 }
 
@@ -5872,13 +5866,8 @@ function rcpCuadrante4Seg(rows) {
   };
 }
 
-function rcpProcess(wb, filename) {
-  let bestSheet=wb.SheetNames[0], bestRows=0;
-  for(const sn of wb.SheetNames){
-    const ws=wb.Sheets[sn];
-    const json=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-    if(json.length>bestRows){bestRows=json.length;bestSheet=sn;}
-  }
+function rcpProcess(wb, filename, sheetName) {
+  const bestSheet = sheetName || pickBestSheet(wb);
   const ws=wb.Sheets[bestSheet];
   const json=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
   if (!json || !json.length || !json[0] || !json[0].length) {
@@ -6928,6 +6917,61 @@ function rcpHealthCheckDim(dim, headers, rows, overrides) {
   if (items.length > 0 && foundItems === items.length) return { ok: true, via: 'items', colName: null, itemResults };
   if (foundItems > 0) return { ok: false, partial: true, via: 'items-partial', colName: null, itemResults, foundItems, totalItems: items.length };
   return { ok: false, via: 'none', colName: null, itemResults };
+}
+
+// ── Selector de hoja (compartido por R/RCP/RC/ROP) ──────────────────────────
+// Algunas bases traen los datos reales en una hoja que no es la primera (ej.
+// "Hoja1" de notas antes de los datos, o varias hojas con distintos cortes).
+// Hasta ahora cada módulo adivinaba la hoja sin dejar corregir: unos con "la
+// de más filas" (R/RCP/RC), otros simplemente la primera (ROP) — ninguno
+// dejaba elegir otra sin volver a subir el archivo. Mismo patrón que
+// "Columnas detectadas": se muestra un selector con la hoja detectada ya
+// elegida, y cambiarla reprocesa al instante sobre el mismo archivo en
+// memoria, sin tener que volver a subirlo.
+function pickBestSheet(wb) {
+  let best = wb.SheetNames[0], bestRows = 0;
+  for (const sn of wb.SheetNames) {
+    const json = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
+    if (json.length > bestRows) { bestRows = json.length; best = sn; }
+  }
+  return best;
+}
+
+const SHEET_PICKER_REGISTRY = {};
+
+// Punto de entrada normal: se llama desde el onload del FileReader con el
+// workbook recién parseado. Procesa de inmediato con la mejor hoja detectada
+// y deja todo listo para poder cambiarla después.
+function sheetPickerLoad(moduleTag, containerId, wb, filename, processFn) {
+  const best = pickBestSheet(wb);
+  SHEET_PICKER_REGISTRY[moduleTag] = { containerId, wb, filename, processFn, currentSheet: best };
+  processFn(wb, filename, best);
+  renderSheetPicker(moduleTag);
+}
+
+function renderSheetPicker(moduleTag) {
+  const reg = SHEET_PICKER_REGISTRY[moduleTag];
+  if (!reg) return;
+  const container = document.getElementById(reg.containerId);
+  if (!container) return;
+  if (!reg.wb || reg.wb.SheetNames.length <= 1) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  const rowCounts = reg.wb.SheetNames.map(sn => XLSX.utils.sheet_to_json(reg.wb.Sheets[sn], { header: 1, defval: '' }).length);
+  container.style.display = '';
+  container.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:.75rem;font-size:12px;flex-wrap:wrap">
+    <span style="color:var(--text2)">Hoja del archivo (${reg.wb.SheetNames.length} encontradas):</span>
+    <select onchange="sheetPickerChange('${moduleTag}', this.value)"
+      style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+      ${reg.wb.SheetNames.map((sn, i) => `<option value="${escHtml(sn)}" ${sn === reg.currentSheet ? 'selected' : ''}>${escHtml(sn)} (${rowCounts[i]} filas)</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+function sheetPickerChange(moduleTag, sheetName) {
+  const reg = SHEET_PICKER_REGISTRY[moduleTag];
+  if (!reg) return;
+  reg.currentSheet = sheetName;
+  reg.processFn(reg.wb, reg.filename, sheetName);
+  renderSheetPicker(moduleTag);
 }
 
 const RCP_HEALTH_REGISTRY = {};
@@ -9206,12 +9250,12 @@ function rcpLoadFile(e){
   const f=e.target.files[0];if(!f)return;
   const r=new FileReader();
   r.onerror=()=>alert('Error leyendo el archivo. Verifica que no esté dañado.');
-  r.onload=ev=>rcpProcess(XLSX.read(ev.target.result,{type:'array'}),f.name);
+  r.onload=ev=>sheetPickerLoad('RCP','rcp-sheetpicker',XLSX.read(ev.target.result,{type:'array'}),f.name,rcpProcess);
   r.readAsArrayBuffer(f);
 }
 function rcpDov(e){e.preventDefault();document.getElementById('rcp-dz').classList.add('over')}
 function rcpDol(){document.getElementById('rcp-dz').classList.remove('over')}
-function rcpDdr(e){e.preventDefault();rcpDol();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>rcpProcess(XLSX.read(ev.target.result,{type:'array'}),f.name);r.readAsArrayBuffer(f);}}
+function rcpDdr(e){e.preventDefault();rcpDol();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>sheetPickerLoad('RCP','rcp-sheetpicker',XLSX.read(ev.target.result,{type:'array'}),f.name,rcpProcess);r.readAsArrayBuffer(f);}}
 
 
 function rcReset() {
@@ -9224,12 +9268,12 @@ function rcReset() {
 }
 function rcDov(e){e.preventDefault();document.getElementById('rc-dz').classList.add('over')}
 function rcDol(){document.getElementById('rc-dz').classList.remove('over')}
-function rcDdr(e){e.preventDefault();rcDol();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>rcProcess(XLSX.read(ev.target.result,{type:'array'}),f.name);r.readAsArrayBuffer(f);}}
+function rcDdr(e){e.preventDefault();rcDol();const f=e.dataTransfer.files[0];if(f){const r=new FileReader();r.onload=ev=>sheetPickerLoad('RC','rc-sheetpicker',XLSX.read(ev.target.result,{type:'array'}),f.name,rcProcess);r.readAsArrayBuffer(f);}}
 
 function rLoadFile(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
-  reader.onload = ev => rProcess(XLSX.read(ev.target.result, {type:'array'}), f.name);
+  reader.onload = ev => sheetPickerLoad('R','r-sheetpicker',XLSX.read(ev.target.result, {type:'array'}), f.name, rProcess);
   reader.readAsArrayBuffer(f);
 }
 
@@ -9239,7 +9283,7 @@ function rDdr(e) {
   e.preventDefault(); rDol();
   const f = e.dataTransfer.files[0]; if (!f) return;
   const reader = new FileReader();
-  reader.onload = ev => rProcess(XLSX.read(ev.target.result, {type:'array'}), f.name);
+  reader.onload = ev => sheetPickerLoad('R','r-sheetpicker',XLSX.read(ev.target.result, {type:'array'}), f.name, rProcess);
   reader.readAsArrayBuffer(f);
 }
 
@@ -9990,11 +10034,12 @@ function ropDrop(e) {
 
 function ropLoadFile(e) { if (e.target.files.length) ropProcess(e.target.files[0]); }
 
-function ropProcess(file) {
+function ropProcess(file, sheetName) {
   const reader = new FileReader();
   reader.onload = function(ev) {
     const wb = XLSX.read(ev.target.result, {type:'binary'});
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const chosenSheet = sheetName || pickBestSheet(wb);
+    const ws = wb.Sheets[chosenSheet];
     const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
     if (!data.length) return;
     ROP.headers = data[0].map(String);
@@ -10004,6 +10049,16 @@ function ropProcess(file) {
     document.getElementById('rop-filters-wrap').style.display = 'block';
     document.getElementById('rop-preview').style.display = 'none';
     rcpRenderHealthCheck('ROP');
+    // ropProcess parsea el workbook adentro de un callback async (a diferencia
+    // de R/RCP/RC, que lo reciben ya parseado) — el registro del selector de
+    // hoja se arma acá directo en vez de con sheetPickerLoad(), porque el wb
+    // recién existe en este punto. Cambiar de hoja vuelve a leer el mismo
+    // archivo (ya en memoria vía `file`), no hace falta volver a subirlo.
+    SHEET_PICKER_REGISTRY['ROP'] = {
+      containerId: 'rop-sheetpicker', wb, filename: file.name, currentSheet: chosenSheet,
+      processFn: (_wb, _fn, sn) => ropProcess(file, sn)
+    };
+    renderSheetPicker('ROP');
   };
   reader.readAsBinaryString(file);
 }
@@ -11094,17 +11149,26 @@ function ropRenderENPS(filterSets) {
 // Antes se capturaba al ancho que tuviera la ventana del navegador en ese
 // momento (impredecible) ×2 (scale), dando imágenes de 2000-3000+ px que
 // quedaban enormes respecto a la lámina y había que achicar a mano cada vez.
-// Forzar el ancho del marco a 1280px antes de capturar (y restaurarlo después)
-// da un tamaño fijo que entra en la lámina sin reescalar. Fondo transparente
-// (backgroundColor:null) para que la franja del título (ver #rop-canvas-wrap)
-// se vea realmente transparente sobre la plantilla del cliente, no blanca.
+//
+// La primera versión de este arreglo forzaba el ancho del marco EN VIVO
+// (visible en pantalla) a 1280px antes de capturar, y lo restauraba después.
+// Eso rompía la vista: los canvas de Chart.js ya estaban dibujados a su
+// tamaño anterior, y no alcanzaban a redibujarse (el resize de Chart.js es
+// asíncrono, vía ResizeObserver) antes de que html2canvas leyera los
+// píxeles — resultado: gráficos estirados/superpuestos, a veces el marco
+// visible quedaba atascado en ese estado roto.
+//
+// Ahora se captura el marco TAL CUAL se ve en pantalla (sin tocar su
+// tamaño) y recién después se reescala la IMAGEN ya capturada a 1280×720 con
+// un canvas intermedio — nunca se toca el DOM en vivo, así que no hay forma
+// de que los gráficos queden a medio redibujar.
 function ropCaptureFrame(wrap) {
-  const prevWidth = wrap.style.width, prevMaxWidth = wrap.style.maxWidth;
-  wrap.style.width = '1280px';
-  wrap.style.maxWidth = 'none';
-  return html2canvas(wrap, { backgroundColor: null, scale: 1 }).finally(() => {
-    wrap.style.width = prevWidth;
-    wrap.style.maxWidth = prevMaxWidth;
+  return html2canvas(wrap, { backgroundColor: null, scale: 1 }).then(canvas => {
+    const target = document.createElement('canvas');
+    target.width = 1280;
+    target.height = 720;
+    target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 1280, 720);
+    return target;
   });
 }
 
@@ -11239,24 +11303,22 @@ async function ropBatchRenderOne(filterSpec) {
   // Capturar. En lotes con muchas láminas seguidas, a veces el marco no terminó de
   // "asentarse" (gráficos recién destruidos/recreados) y html2canvas captura un
   // canvas vacío de 0×0 — se reintenta varias veces antes de rendirse, para no
-  // dejar esa lámina en blanco.
-  // Mismo tamaño fijo (1280×720, lámina PPT a 96dpi) y fondo transparente que
-  // ropDownloadPNG — ver ropCaptureFrame(). Acá se mantiene el ancho forzado
-  // durante todos los reintentos (no se restaura entre medio) para no pelear
-  // con el resto del lote mientras se reintenta.
+  // dejar esa lámina en blanco. Igual que ropCaptureFrame(): se captura el marco
+  // TAL CUAL se ve en pantalla (nunca se le fuerza un ancho distinto — eso
+  // rompía los gráficos de Chart.js, ya dibujados a su tamaño anterior) y recién
+  // después se reescala el resultado a 1280×720 con un canvas intermedio.
   const frame = document.getElementById('rop-export-frame');
-  const prevWidth = frame.style.width, prevMaxWidth = frame.style.maxWidth;
-  frame.style.width = '1280px';
-  frame.style.maxWidth = 'none';
   let canvas = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     canvas = await html2canvas(frame, { backgroundColor: null, scale: 1, useCORS: true });
     if (canvas.width && canvas.height) break;
     await new Promise(r => setTimeout(r, 500 + attempt * 300));
   }
-  frame.style.width = prevWidth;
-  frame.style.maxWidth = prevMaxWidth;
-  return canvas.toDataURL('image/png');
+  const target = document.createElement('canvas');
+  target.width = 1280;
+  target.height = 720;
+  target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 1280, 720);
+  return target.toDataURL('image/png');
 }
 
 async function ropBatchLoadLibs() {

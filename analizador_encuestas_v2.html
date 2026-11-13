@@ -11316,7 +11316,15 @@ function ropRenderENPS(filterSets) {
 // un canvas intermedio — nunca se toca el DOM en vivo, así que no hay forma
 // de que los gráficos queden a medio redibujar.
 function ropCaptureFrame(wrap) {
-  return html2canvas(wrap, { backgroundColor: null, scale: 1 }).then(canvas => {
+  // scale:1 capturaba al tamaño EN PANTALLA del marco (normalmente mucho más chico
+  // que 1280×720, ej. ~640×360 en una ventana angosta), y ese bitmap de baja
+  // resolución se estiraba después al tamaño final — quedaba borroso/pixelado.
+  // Se calcula un factor de escala para que la captura nativa sea siempre, como
+  // mínimo, 1280×720 (y al menos el doble de nítida con el piso de 2), así el
+  // reescalado final del canvas intermedio siempre reduce (nunca agranda).
+  const rect = wrap.getBoundingClientRect();
+  const scale = Math.max(2, 1280 / rect.width, 720 / rect.height);
+  return html2canvas(wrap, { backgroundColor: null, scale }).then(canvas => {
     const target = document.createElement('canvas');
     target.width = 1280;
     target.height = 720;
@@ -11461,9 +11469,11 @@ async function ropBatchRenderOne(filterSpec) {
   // rompía los gráficos de Chart.js, ya dibujados a su tamaño anterior) y recién
   // después se reescala el resultado a 1280×720 con un canvas intermedio.
   const frame = document.getElementById('rop-export-frame');
+  const frameRect = frame.getBoundingClientRect();
+  const captureScale = Math.max(2, 1280 / frameRect.width, 720 / frameRect.height);
   let canvas = null;
   for (let attempt = 0; attempt < 4; attempt++) {
-    canvas = await html2canvas(frame, { backgroundColor: null, scale: 1, useCORS: true });
+    canvas = await html2canvas(frame, { backgroundColor: null, scale: captureScale, useCORS: true });
     if (canvas.width && canvas.height) break;
     await new Promise(r => setTimeout(r, 500 + attempt * 300));
   }

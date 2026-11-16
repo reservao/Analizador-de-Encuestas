@@ -2088,9 +2088,13 @@ function dlFull() {
 
   // Construir orden de columnas: CALC_ justo después de la columna sistema si existe;
   // si la dimensión no venía calculada en el Excel (sin columna sistema), se agrega
-  // igual, justo después de la última pregunta/ítem de esa dimensión — antes esas
-  // dimensiones quedaban afuera de la descarga por completo (nunca calzaban contra
-  // ningún header), que es justo lo que no debía pasar: si hay ítems, hay cálculo.
+  // igual, justo después del ítem de esa dimensión que esté MÁS A LA DERECHA en el
+  // Excel real — antes esas dimensiones quedaban afuera de la descarga por completo
+  // (nunca calzaban contra ningún header), que es justo lo que no debía pasar: si hay
+  // ítems, hay cálculo. OJO: "el último ítem" se decide por posición real de columna
+  // (indexOf en G.headers), NO por el orden en que dim.preguntas los declara — un
+  // archivo real puede traer, p.ej., WE8,WE9,...,WE5,WE7,WE3,WE6 con WE9 último en el
+  // catálogo pero lejos de ser la columna más a la derecha entre los ítems de Engagement.
   const origCols = G.headers;
   const handled = new Set();
   const newCols = [];
@@ -2098,8 +2102,12 @@ function dlFull() {
     newCols.push({ col, isCalc: false, dim: null });
     const matchDim = allDims.find(d => d.sysCol === col && !handled.has(col));
     if (matchDim) { newCols.push({ col: matchDim.calcColName, isCalc: true, dim: matchDim }); handled.add(col); }
-    const matchLastItem = !matchDim && allDims.find(d =>
-      !d.sysCol && !handled.has(d.calcColName) && d.qCols.length && d.qCols[d.qCols.length - 1].col === col);
+    const matchLastItem = !matchDim && allDims.find(d => {
+      if (d.sysCol || handled.has(d.calcColName) || !d.qCols.length) return false;
+      const rightmostCol = d.qCols.reduce((best, x) =>
+        G.headers.indexOf(x.col) > G.headers.indexOf(best) ? x.col : best, d.qCols[0].col);
+      return rightmostCol === col;
+    });
     if (matchLastItem) { newCols.push({ col: matchLastItem.calcColName, isCalc: true, dim: matchLastItem }); handled.add(matchLastItem.calcColName); }
   }
   // Por si alguna dimensión sin columna sistema quedó sin ubicarse (ítems no

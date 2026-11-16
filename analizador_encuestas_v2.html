@@ -799,27 +799,32 @@ tr:hover td { background: var(--bg); }
         <div class="banner-title" id="p3-err-txt"></div>
         <div class="banner-sub">Haz clic en cada dimensión para ver el detalle de las personas afectadas.</div>
       </div>
+      <div class="banner warn" id="p3-gen-wrap" style="display:none">
+        <div class="banner-title" id="p3-gen-txt"></div>
+        <div class="banner-sub">No es un error: el Excel llegó sin esa columna calculada y la plataforma la generó por ti. Está incluida en la descarga de abajo.</div>
+      </div>
     </div>
 
     <div id="p3-issues-wrap" style="display:none">
       <div class="slbl">Dimensiones con discrepancias</div>
       <div id="p3-issues"></div>
-      <div class="dl-section">
-        <div class="slbl">Descargar</div>
-        <div class="dl-item">
-          <div><div class="dl-title">Excel completo con recálculos</div><div class="dl-sub">Datos originales + columna CALC_ al lado de cada dimensión + columna REVISAR</div></div>
-          <button class="btn btn-secondary btn-sm" onclick="dlFull()">⬇ Descargar .xlsx</button>
-        </div>
-        <div class="dl-item">
-          <div><div class="dl-title">Reporte de discrepancias</div><div class="dl-sub">Solo las personas con diferencia ≥ 0.05, organizadas por dimensión</div></div>
-          <button class="btn btn-secondary btn-sm" onclick="dlReport()">⬇ Descargar reporte .xlsx</button>
-        </div>
-      </div>
     </div>
 
     <div id="p3-ok-wrap" style="display:none">
       <div class="slbl">Dimensiones sin discrepancias</div>
       <div id="p3-ok-list"></div>
+    </div>
+
+    <div class="dl-section">
+      <div class="slbl">Descargar</div>
+      <div class="dl-item">
+        <div><div class="dl-title">Excel completo con recálculos</div><div class="dl-sub">Datos originales + columna CALC_ al lado de cada dimensión (generada aunque el Excel no la trajera calculada) + columna REVISAR</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="dlFull()">⬇ Descargar .xlsx</button>
+      </div>
+      <div class="dl-item" id="p3-dlreport-item" style="display:none">
+        <div><div class="dl-title">Reporte de discrepancias</div><div class="dl-sub">Solo las personas con diferencia ≥ 0.05, organizadas por dimensión</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="dlReport()">⬇ Descargar reporte .xlsx</button>
+      </div>
     </div>
 
     <div class="footer-nav">
@@ -1805,9 +1810,11 @@ function runCalcAnalysis(headers, rows, detected) {
       if (isNaN(sys)) return;
       if (Math.abs(calc - sys) >= THR) errRows.push({ rowIdx: ri, id: row[headers.indexOf(idCol)], calc: +calc.toFixed(4), sys: +sys.toFixed(4), diff: +(Math.abs(calc - sys)).toFixed(4) });
     });
+    const generated = !sysCol && qCols.length > 0;
     if (errRows.length) errDims.push({ dim, sysCol, qCols, errRows, calcColName });
-    else okDims.push({ dim, sysCol, qCols,
-      note: qCols.length === 0 ? (sysCol ? 'Solo columna pre-calculada (sin ítems)' : 'Sin datos disponibles') : (sysCol ? 'Sin discrepancias' : 'Sin columna sistema'),
+    else okDims.push({ dim, sysCol, qCols, generated,
+      note: qCols.length === 0 ? (sysCol ? 'Solo columna pre-calculada (sin ítems)' : 'Sin datos disponibles')
+            : (sysCol ? 'Sin discrepancias' : 'El Excel no trae esta dimensión calculada — la plataforma generó el promedio desde sus ' + qCols.length + ' ítems'),
       errRows: [], calcColName });
   }
   return { errDims, okDims, idCol };
@@ -1991,6 +1998,8 @@ function renderCalc() {
   const hasErr = a.errDims.length > 0;
   document.getElementById('p3-ok').style.display = hasErr ? 'none' : 'block';
   document.getElementById('p3-err-banner').style.display = hasErr ? 'block' : 'none';
+  const dlReportItem = document.getElementById('p3-dlreport-item');
+  if (dlReportItem) dlReportItem.style.display = hasErr ? 'flex' : 'none';
   if (hasErr) {
     document.getElementById('p3-err-txt').textContent =
       a.errDims.length + ' dimensión' + (a.errDims.length > 1 ? 'es tienen' : ' tiene') + ' diferencias ≥ 0.05';
@@ -2028,14 +2037,24 @@ function renderCalc() {
     document.getElementById('p3-issues-wrap').style.display = 'none';
   }
 
+  const genCount = a.okDims.filter(r => r.generated).length;
+  const genWrap = document.getElementById('p3-gen-wrap');
+  if (genWrap) {
+    genWrap.style.display = genCount ? 'block' : 'none';
+    const genTxt = document.getElementById('p3-gen-txt');
+    if (genTxt) genTxt.textContent = (genCount > 1
+      ? genCount + ' dimensiones no venían calculadas'
+      : genCount + ' dimensión no venía calculada') + ' en el Excel — la plataforma generó el promedio desde sus ítems (columna CALC_ en la descarga)';
+  }
+
   document.getElementById('p3-ok-wrap').style.display = 'block';
   document.getElementById('p3-ok-list').innerHTML = a.okDims.map(r => `
     <div class="ok-item">
       <div class="ok-item-left">
         <span class="ok-code">${r.dim.nombre}</span>
-        <span class="ok-meta">${r.note}</span>
+        <span class="ok-meta">${escHtml(r.note)}</span>
       </div>
-      <span class="badge ok">OK</span>
+      <span class="badge ${r.generated ? 'warn' : 'ok'}">${r.generated ? '🆕 Generada' : 'OK'}</span>
     </div>`).join('');
 }
 
@@ -2067,7 +2086,11 @@ function dlFull() {
   const allDims = [...a.errDims, ...a.okDims].filter(d => d.qCols && d.qCols.length);
   const errIdxs = new Set(a.errDims.flatMap(d => d.errRows.map(r => r.rowIdx)));
 
-  // Construir orden de columnas: CALC_ justo después de cada columna sistema
+  // Construir orden de columnas: CALC_ justo después de la columna sistema si existe;
+  // si la dimensión no venía calculada en el Excel (sin columna sistema), se agrega
+  // igual, justo después de la última pregunta/ítem de esa dimensión — antes esas
+  // dimensiones quedaban afuera de la descarga por completo (nunca calzaban contra
+  // ningún header), que es justo lo que no debía pasar: si hay ítems, hay cálculo.
   const origCols = G.headers;
   const handled = new Set();
   const newCols = [];
@@ -2075,6 +2098,14 @@ function dlFull() {
     newCols.push({ col, isCalc: false, dim: null });
     const matchDim = allDims.find(d => d.sysCol === col && !handled.has(col));
     if (matchDim) { newCols.push({ col: matchDim.calcColName, isCalc: true, dim: matchDim }); handled.add(col); }
+    const matchLastItem = !matchDim && allDims.find(d =>
+      !d.sysCol && !handled.has(d.calcColName) && d.qCols.length && d.qCols[d.qCols.length - 1].col === col);
+    if (matchLastItem) { newCols.push({ col: matchLastItem.calcColName, isCalc: true, dim: matchLastItem }); handled.add(matchLastItem.calcColName); }
+  }
+  // Por si alguna dimensión sin columna sistema quedó sin ubicarse (ítems no
+  // contiguos/no encontrados como última columna por algún motivo), se agrega al final.
+  for (const d of allDims) {
+    if (!d.sysCol && !handled.has(d.calcColName)) newCols.push({ col: d.calcColName, isCalc: true, dim: d });
   }
   newCols.push({ col: 'REVISAR', isCalc: false, dim: null, isRevisar: true });
 

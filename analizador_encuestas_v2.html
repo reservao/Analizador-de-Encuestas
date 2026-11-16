@@ -777,6 +777,7 @@ tr:hover td { background: var(--bg); }
 
   <!-- PANEL 3: CÁLCULOS -->
   <div id="panel3" style="display:none">
+    <div id="g-healthcheck" style="display:none"></div>
     <div class="card">
       <div class="file-bar">
         <div>
@@ -1640,7 +1641,7 @@ const MAESTRO = [
 const THR = 0.05;
 
 // ─── ESTADO GLOBAL ─────────────────────────────────────────────────────────
-let G = { headers:[], rows:[], filename:'', detected:null, rangeResult:null, calcResult:null };
+let G = { headers:[], rows:[], filename:'', detected:null, rangeResult:null, calcResult:null, colOverrides:{} };
 
 // ─── NORMALIZACIÓN ─────────────────────────────────────────────────────────
 function norm(s) {
@@ -1707,18 +1708,41 @@ function findSysCol(dim, headers) {
   return null;
 }
 
+// ── Overrides manuales para Revisión Resultados (módulo G) ──────────────────
+// Mismo patrón usado en One Page (ver ropFindCol/ropItemTextCol/ropFindSysCol):
+// detectDimensions/runCalcAnalysis siempre se llaman con G.headers en la
+// práctica, así que estos wrappers hardcodean G en vez de hilar un parámetro
+// `overrides` por toda la cadena. La clave de override es el código del ítem
+// (ej. 'WE1') o 'DIM:'+dim.id para la columna pre-calculada de respaldo.
+function gHasOverride(key) {
+  return G.colOverrides && Object.prototype.hasOwnProperty.call(G.colOverrides, key);
+}
+function gFindCol(q) {
+  if (gHasOverride(q)) return G.colOverrides[q] || null;
+  return findCol(q, G.headers);
+}
+function gItemTextCol(q) {
+  if (gHasOverride(q)) return G.colOverrides[q] || null;
+  return itemTextCol(q, G.headers);
+}
+function gFindSysCol(dim) {
+  const key = 'DIM:' + dim.id;
+  if (gHasOverride(key)) return G.colOverrides[key] || null;
+  return findSysCol(dim, G.headers);
+}
+
 // ─── ANÁLISIS ──────────────────────────────────────────────────────────────
 function detectDimensions(headers) {
   const found = [], missing = [];
   for (const dim of MAESTRO) {
     let qCols = dim.preguntas.map((q, i) => {
-      let col = findCol(q, headers);
-      if (!col && dim.textos && dim.textos[i]) col = findCol(dim.textos[i], headers);
+      let col = gFindCol(q);
+      if (!col && !gHasOverride(q) && dim.textos && dim.textos[i]) col = findCol(dim.textos[i], headers);
       return { q, col };
     }).filter(x => x.col);
     // Fallback a nombres alternativos de ítems (ej: agotamiento_1, engagement_1)
     if (!qCols.length && dim.altPreguntas) {
-      qCols = dim.altPreguntas.map(q => ({ q, col: findCol(q, headers) })).filter(x => x.col);
+      qCols = dim.altPreguntas.map(q => ({ q, col: gFindCol(q) })).filter(x => x.col);
     }
     if (qCols.length > 0) {
       const foundCodes = new Set(qCols.map(x => x.q));
@@ -1726,7 +1750,7 @@ function detectDimensions(headers) {
       found.push({ dim, qCols, partial: qCols.length < dim.preguntas.length, missingCodes });
     } else {
       // Fallback: aceptar bases con solo columna pre-calculada (sin ítems individuales)
-      const sysCol = findSysCol(dim, headers);
+      const sysCol = gFindSysCol(dim);
       if (sysCol) found.push({ dim, qCols: [], partial: false, sysColOnly: true });
       else missing.push(dim);
     }
@@ -1795,7 +1819,7 @@ function runCalcAnalysis(headers, rows, detected) {
       }
       continue;
     }
-    const sysCol = findSysCol(dim, headers);
+    const sysCol = gFindSysCol(dim);
     const calcColName = 'CALC_' + dim.nombre;
     const qColIdxs = qCols.map(x => headers.indexOf(x.col));
     const sysColIdx = sysCol ? headers.indexOf(sysCol) : -1;
@@ -1985,9 +2009,125 @@ function renderRanges() {
     </div>`).join('');
 }
 
+// ── Panel "Columnas detectadas" de Revisión Resultados (módulo G) ──────────
+// Mismo panel editable que en Gráficos/Tablas/One Page, pero sobre MAESTRO
+// (el catálogo real de G) y con la misma prioridad exacta de
+// detectDimensions/runCalcAnalysis: ítems (gFindCol, con respaldo por texto
+// literal) → ítems alternativos (altPreguntas) → columna pre-calculada de
+// respaldo (gFindSysCol). Deja ver y corregir qué columna usa cada ítem o
+// cada dimensión completa, sin esperar a que aparezca una discrepancia para
+// darse cuenta de que algo está mal detectado.
+function gHealthCheckDim(dim) {
+  let itemResults = dim.preguntas.map((code, i) => {
+    let col = gFindCol(code);
+    if (!col && !gHasOverride(code) && dim.textos && dim.textos[i]) col = findCol(dim.textos[i], G.headers);
+    return { code, found: !!col, colName: col };
+  });
+  let usedAlt = false;
+  if (!itemResults.some(i => i.found) && dim.altPreguntas && dim.altPreguntas.length) {
+    itemResults = dim.altPreguntas.map(code => {
+      const col = gFindCol(code);
+      return { code, found: !!col, colName: col };
+    });
+    usedAlt = true;
+  }
+  const foundItems = itemResults.filter(i => i.found).length;
+  if (foundItems > 0) {
+    return { ok: true, partial: foundItems < itemResults.length, via: usedAlt ? 'altitems' : 'items', colName: null, itemResults, foundItems, totalItems: itemResults.length };
+  }
+  const sysCol = gFindSysCol(dim);
+  if (sysCol) return { ok: true, via: 'column', colName: sysCol, itemResults };
+  return { ok: false, via: 'none', colName: null, itemResults };
+}
+
+function gHealthSetOverride(key, value) {
+  if (!G.colOverrides) G.colOverrides = {};
+  if (value) G.colOverrides[key] = value; else delete G.colOverrides[key];
+  // El override cambia qué columnas usa detectDimensions, así que hay que
+  // re-detectar e invalidar todo lo que dependía de la detección vieja.
+  G.detected = detectDimensions(G.headers);
+  G.rangeResult = null;
+  G.calcResult = null;
+  renderCalc();
+}
+
+function gRenderHealthCheck() {
+  const container = document.getElementById('g-healthcheck');
+  if (!container) return;
+  if (!G.headers || !G.headers.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  const headers = G.headers, overrides = G.colOverrides || {};
+  const dims = MAESTRO.filter(d => d.id !== 'enps');
+  const results = dims.map(dim => ({ dim, r: gHealthCheckDim(dim) }));
+  const okCount = results.filter(x => x.r.ok).length;
+  const allOk = okCount === results.length;
+  const bannerText = allOk
+    ? `Las ${results.length} dimensiones se detectaron correctamente`
+    : `${results.length - okCount} de ${results.length} dimensiones con problemas — revisa el detalle`;
+
+  const rowsHtml = results.map(({ dim, r }) => {
+    const icon = r.ok ? '✓' : (r.partial ? '⚠' : '✗');
+    const iconColor = r.ok ? '#2E7D32' : (r.partial ? '#B8860B' : '#B23B2E');
+    let detail;
+    if (r.ok && r.colName) detail = `<code>${escHtml(r.colName)}</code> <span style="color:var(--text2)">(columna pre-calculada)</span>`;
+    else if (r.ok && !r.partial) detail = `<span style="color:var(--text2)">calculado desde ${r.itemResults.length} ítems${r.via === 'altitems' ? ' (alternativos)' : ''}</span>`;
+    else if (r.partial) detail = `<span style="color:#B8860B">solo ${r.foundItems} de ${r.totalItems} ítems encontrados</span>`;
+    else detail = `<span style="color:#B23B2E">no encontrada</span>`;
+
+    const itemsDetailRows = r.itemResults.map(it => {
+      const iIcon = it.found ? '✓' : '✗';
+      const iColor = it.found ? '#2E7D32' : '#B23B2E';
+      const overrideSel = `<select onchange="gHealthSetOverride('${escJsAttr(it.code)}', this.value)"
+        style="font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[it.code] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>`;
+      return `<div style="display:flex;gap:8px;align-items:center;font-size:11px;padding:2px 0;flex-wrap:wrap">
+        <span style="color:${iColor};width:14px;flex-shrink:0">${iIcon}</span>
+        <span style="color:var(--text2);flex:0 0 65px">${escHtml(it.code)}</span>
+        <span style="flex:1;min-width:140px;color:${it.found ? 'var(--text)' : 'var(--text2)'}">${escHtml(it.found ? it.colName : '(no encontrada)')}</span>
+        ${overrideSel}
+      </div>`;
+    }).join('');
+
+    const sysKey = 'DIM:' + dim.id;
+    const sysOverrideHtml = `
+      <select onchange="gHealthSetOverride('${escJsAttr(sysKey)}', this.value)"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[sysKey] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>`;
+
+    return `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+        <span style="color:${iconColor};width:14px;flex-shrink:0">${icon}</span>
+        <span style="flex:0 0 190px">${escHtml(dim.nombre)}</span>
+        <span style="flex:1;min-width:140px">${detail}</span>
+      </summary>
+      <div style="padding:6px 0 6px 24px">
+        ${itemsDetailRows}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--text2)">
+          <span>Columna de respaldo (si no hay ítems):</span>${sysOverrideHtml}
+        </div>
+      </div>
+    </details>`;
+  }).join('');
+
+  container.style.display = '';
+  container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${allOk ? '#2E7D32' : '#B23B2E'}">
+      ${allOk ? '✅' : '🛑'} ${escHtml(bannerText)}
+    </div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las ${results.length} dimensiones (y corregir si hace falta)</summary>
+      <div style="margin-top:8px">${rowsHtml}</div>
+    </details>
+  </div>`;
+}
+
 // ─── RENDER PASO 3: CÁLCULOS ───────────────────────────────────────────────
 function renderCalc() {
   if (!G.calcResult) G.calcResult = runCalcAnalysis(G.headers, G.rows, G.detected);
+  gRenderHealthCheck();
   const a = G.calcResult;
   document.getElementById('p3-fname').textContent = G.filename;
   document.getElementById('p3-fmeta').textContent = G.rows.length + ' personas · ' + (a.errDims.length + a.okDims.length) + ' dimensiones verificadas';
@@ -2243,7 +2383,7 @@ function loadFile(e) {
 }
 
 function resetAll() {
-  G = { headers:[], rows:[], filename:'', detected:null, rangeResult:null, calcResult:null };
+  G = { headers:[], rows:[], filename:'', detected:null, rangeResult:null, calcResult:null, colOverrides:{} };
   C = { headers:[], rows:[], filename:'', idCol:null, colPairs:[], consistencyResult:null };
   NV = null;
 
@@ -2636,10 +2776,10 @@ function runNewVars() {
 
   const weMap = {};
   ['WE1','WE2','WE3','WE4','WE5','WE6','WE7','WE8','WE9'].forEach(q => {
-    weMap[q] = itemTextCol(q, G.headers);
+    weMap[q] = gItemTextCol(q);
   });
-  const exCols  = ['EX1','EX2','EX3','EX4'].map(q => itemTextCol(q, G.headers));
-  const enpsCol = findCol('eNPS', G.headers);
+  const exCols  = ['EX1','EX2','EX3','EX4'].map(q => gItemTextCol(q));
+  const enpsCol = gFindCol('eNPS');
 
   // Columnas de cada palanca (código o texto literal de la pregunta, mismo
   // respaldo que WE/EX). dim.sistCols no se usa aquí: igual que vigor/agot
@@ -2648,7 +2788,7 @@ function runNewVars() {
   const palancaCols = {};
   PALANCAS_IDS.forEach(id => {
     const dim = MAESTRO.find(m => m.id === id);
-    palancaCols[id] = dim ? dim.preguntas.map(q => itemTextCol(q, G.headers)) : [];
+    palancaCols[id] = dim ? dim.preguntas.map(q => gItemTextCol(q)) : [];
   });
 
   const getV = (row, col) => col ? parseFloat(row[G.headers.indexOf(col)]) : NaN;

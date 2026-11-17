@@ -1740,6 +1740,36 @@ function gFindSysCol(dim) {
   return findSysCol(dim, G.headers);
 }
 
+// eNPS no se detecta por código/texto de pregunta como el resto de MAESTRO —
+// se busca por nombre ('enps'/'recomendar'/'recommend') Y que la columna
+// tenga de verdad escala 0-10 (algún valor > 5), para no confundirla con una
+// pregunta de escala 1-5 que también contenga esas palabras. Antes esto vivía
+// duplicado e inconsistente entre sí en 3 lugares (runCalcAnalysis la
+// detectaba así, pero runNewVars/Nuevas Variables llamaba gFindCol('eNPS') —
+// que solo matchea por código/texto exacto y nunca encontraba nada por esta
+// heurística) — ahora un solo detector, compartido y respetando el override.
+function detectEnpsCol(headers, rows) {
+  for (const h of headers) {
+    if (!h || !norm(h).replace(/_/g, '').includes('enps')) continue;
+    const idx = headers.indexOf(h);
+    const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
+    if (numVals.length && numVals.some(v => v > 5)) return h;
+  }
+  for (const h of headers) {
+    if (!h) continue;
+    const nh = norm(h);
+    if (!nh.includes('recomendar') && !nh.includes('recommend')) continue;
+    const idx = headers.indexOf(h);
+    const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
+    if (numVals.length && numVals.some(v => v > 5)) return h;
+  }
+  return null;
+}
+function gFindEnpsCol() {
+  if (gHasOverride('eNPS')) return G.colOverrides['eNPS'] || null;
+  return detectEnpsCol(G.headers, G.rows);
+}
+
 // ─── ANÁLISIS ──────────────────────────────────────────────────────────────
 function detectDimensions(headers) {
   const found = [], missing = [];
@@ -1801,25 +1831,7 @@ function runCalcAnalysis(headers, rows, detected) {
   const errDims = [], okDims = [];
   for (const { dim, qCols } of detected.found) {
     if (dim.calculo === 'enps') {
-      // Buscar columna eNPS con escala 0-10 real (debe tener valores > 5 para evitar confundir con escala 1-5)
-      let eCol = null;
-      for (const h of headers) {
-        if (!h || !norm(h).replace(/_/g,'').includes('enps')) continue;
-        const idx = headers.indexOf(h);
-        const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
-        if (numVals.length && numVals.some(v => v > 5)) { eCol = h; break; }
-      }
-      // Fallback: buscar columna 'recomendar'/'recommend' con escala 0-10 (ej: Transbank)
-      if (!eCol) {
-        for (const h of headers) {
-          if (!h) continue;
-          const nh = norm(h);
-          if (!nh.includes('recomendar') && !nh.includes('recommend')) continue;
-          const idx = headers.indexOf(h);
-          const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
-          if (numVals.length && numVals.some(v => v > 5)) { eCol = h; break; }
-        }
-      }
+      const eCol = gFindEnpsCol();
       if (eCol) {
         const vals = rows.map(r => parseFloat(r[headers.indexOf(eCol)])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
         const promo = vals.filter(v => v >= 9).length, detr = vals.filter(v => v <= 6).length;
@@ -2071,13 +2083,19 @@ function gRenderHealthCheck(containerId) {
   if (!container) return;
   if (!G.headers || !G.headers.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
   const headers = G.headers, overrides = G.colOverrides || {};
+  // eNPS no pasa por gHealthCheckDim (no es un ítem/código como el resto de
+  // MAESTRO — se detecta por nombre + escala 0-10 real, ver gFindEnpsCol),
+  // así que se arma aparte pero SÍ se muestra y SÍ es editable, con 'eNPS'
+  // como clave de override (misma que ya usan runCalcAnalysis/runNewVars).
   const dims = MAESTRO.filter(d => d.id !== 'enps');
   const results = dims.map(dim => ({ dim, r: gHealthCheckDim(dim) }));
-  const okCount = results.filter(x => x.r.ok).length;
-  const allOk = okCount === results.length;
+  const enpsCol = gFindEnpsCol();
+  const total = results.length + 1;
+  const okCount = results.filter(x => x.r.ok).length + (enpsCol ? 1 : 0);
+  const allOk = okCount === total;
   const bannerText = allOk
-    ? `Las ${results.length} dimensiones se detectaron correctamente`
-    : `${results.length - okCount} de ${results.length} dimensiones con problemas — revisa el detalle`;
+    ? `Las ${total} dimensiones se detectaron correctamente`
+    : `${total - okCount} de ${total} dimensiones con problemas — revisa el detalle`;
 
   const rowsHtml = results.map(({ dim, r }) => {
     const icon = r.ok ? '✓' : (r.partial ? '⚠' : '✗');
@@ -2127,14 +2145,33 @@ function gRenderHealthCheck(containerId) {
     </details>`;
   }).join('');
 
+  const enpsIcon = enpsCol ? '✓' : '✗';
+  const enpsColor = enpsCol ? '#2E7D32' : '#B23B2E';
+  const enpsOverrideSel = `
+    <select onchange="gHealthSetOverride('eNPS', this.value)"
+      style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+      <option value="">— automático —</option>
+      ${headers.map(h => `<option value="${escHtml(h)}" ${overrides['eNPS'] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+    </select>`;
+  const enpsRow = `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+    <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+      <span style="color:${enpsColor};width:14px;flex-shrink:0">${enpsIcon}</span>
+      <span style="flex:0 0 190px">eNPS</span>
+      <span style="flex:1;min-width:140px">${enpsCol ? `<code>${escHtml(enpsCol)}</code>` : `<span style="color:#B23B2E">no encontrada</span>`}</span>
+    </summary>
+    <div style="padding:6px 0 6px 24px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+      <span>Columna:</span>${enpsOverrideSel}
+    </div>
+  </details>`;
+
   container.style.display = '';
   container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
     <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${allOk ? '#2E7D32' : '#B23B2E'}">
       ${allOk ? '✅' : '🛑'} ${escHtml(bannerText)}
     </div>
     <details style="margin-top:8px">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las ${results.length} dimensiones (y corregir si hace falta)</summary>
-      <div style="margin-top:8px">${rowsHtml}</div>
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las ${total} dimensiones (y corregir si hace falta)</summary>
+      <div style="margin-top:8px">${rowsHtml}${enpsRow}</div>
     </details>
   </div>`;
 }
@@ -2810,7 +2847,7 @@ function runNewVars() {
     weMap[q] = gItemTextCol(q);
   });
   const exCols  = ['EX1','EX2','EX3','EX4'].map(q => gItemTextCol(q));
-  const enpsCol = gFindCol('eNPS');
+  const enpsCol = gFindEnpsCol();
 
   // Columnas de cada palanca (código o texto literal de la pregunta, mismo
   // respaldo que WE/EX). dim.sistCols no se usa aquí: igual que vigor/agot
@@ -10699,6 +10736,16 @@ function ropFindSysCol(dim) {
   }
   return findSysCol(dim, ROP.headers);
 }
+// eNPS no se detecta por código/texto como el resto de MAESTRO (ver
+// detectEnpsCol, compartida con el módulo G) — antes ropCalcEnps traía su
+// propia detección duplicada e inline que NUNCA miraba ROP.colOverrides, así
+// que el panel "Columnas detectadas" lo mostraba pero no se podía corregir.
+function ropFindEnpsCol(rows) {
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, 'eNPS')) {
+    return ROP.colOverrides['eNPS'] || null;
+  }
+  return detectEnpsCol(ROP.headers, rows || ROP.rows);
+}
 
 function ropCalcDim(dimId, rows) {
   const dim = MAESTRO.find(d => d.id === dimId);
@@ -10855,8 +10902,8 @@ function ropRenderHealthCheck() {
   const headers = ROP.headers, overrides = ROP.colOverrides || {};
   const dims = MAESTRO.filter(d => d.id !== 'enps');
   const results = dims.map(dim => ({ dim, r: ropHealthCheckDim(dim) }));
-  const enpsOk = !!(ROP.rows && ROP.rows.length && ropCalcEnps(ROP.rows));
-  const okCount = results.filter(x => x.r.ok).length + (enpsOk ? 1 : 0);
+  const enpsCol = ropFindEnpsCol(ROP.rows);
+  const okCount = results.filter(x => x.r.ok).length + (enpsCol ? 1 : 0);
   const total = results.length + 1;
   const allOk = okCount === total;
   const bannerText = allOk
@@ -10911,13 +10958,24 @@ function ropRenderHealthCheck() {
     </details>`;
   }).join('');
 
-  const enpsIcon = enpsOk ? '✓' : '✗';
-  const enpsColor = enpsOk ? '#2E7D32' : '#B23B2E';
-  const enpsRow = `<div style="border-bottom:1px solid var(--border);padding:8px 0;display:flex;align-items:center;gap:10px;font-size:12px">
-    <span style="color:${enpsColor};width:14px;flex-shrink:0">${enpsIcon}</span>
-    <span style="flex:0 0 190px">eNPS</span>
-    <span style="flex:1;color:var(--text2)">${enpsOk ? 'detectado' : 'no encontrado — revisa que exista una columna con la pregunta de recomendación (escala 0-10)'}</span>
-  </div>`;
+  const enpsIcon = enpsCol ? '✓' : '✗';
+  const enpsColor = enpsCol ? '#2E7D32' : '#B23B2E';
+  const enpsOverrideSel = `
+    <select onchange="ropHealthSetOverride('eNPS', this.value)"
+      style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+      <option value="">— automático —</option>
+      ${headers.map(h => `<option value="${escHtml(h)}" ${overrides['eNPS'] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+    </select>`;
+  const enpsRow = `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+    <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+      <span style="color:${enpsColor};width:14px;flex-shrink:0">${enpsIcon}</span>
+      <span style="flex:0 0 190px">eNPS</span>
+      <span style="flex:1;min-width:140px">${enpsCol ? `<code>${escHtml(enpsCol)}</code>` : `<span style="color:#B23B2E">no encontrada</span>`}</span>
+    </summary>
+    <div style="padding:6px 0 6px 24px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+      <span>Columna:</span>${enpsOverrideSel}
+    </div>
+  </details>`;
 
   container.style.display = '';
   container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
@@ -10932,25 +10990,7 @@ function ropRenderHealthCheck() {
 }
 
 function ropCalcEnps(rows) {
-  let eCol = null;
-  // Paso 1: buscar columna con 'enps' en el nombre y escala 0-10 real (debe tener valores > 5)
-  for (const h of ROP.headers) {
-    if (!h || !norm(h).replace(/_/g,'').includes('enps')) continue;
-    const idx = ROP.headers.indexOf(h);
-    const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
-    if (numVals.length && numVals.some(v => v > 5)) { eCol = h; break; }
-  }
-  // Paso 2: sin resultado → buscar columna 'recomendar'/'recommend' con escala 0-10 (ej: Transbank)
-  if (!eCol) {
-    for (const h of ROP.headers) {
-      if (!h) continue;
-      const nh = norm(h);
-      if (!nh.includes('recomendar') && !nh.includes('recommend')) continue;
-      const idx = ROP.headers.indexOf(h);
-      const numVals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
-      if (numVals.length && numVals.some(v => v > 5)) { eCol = h; break; }
-    }
-  }
+  const eCol = ropFindEnpsCol(rows);
   if (!eCol) return null;
   const idx = ROP.headers.indexOf(eCol);
   const vals = rows.map(r => parseFloat(r[idx])).filter(v => !isNaN(v) && v>=0 && v<=10);

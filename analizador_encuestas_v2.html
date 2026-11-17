@@ -4788,6 +4788,84 @@ function rFindCol(keywords, headers) {
   return null;
 }
 
+// eNPS en Tablas Excel no busca el puntaje 0-10 (como G/One Page) sino una
+// columna de CATEGORÍA ya etiquetada (Promotor/Neutro/Detractor) — por eso
+// vive aparte del resto del catálogo MAESTRO/R_DIMS y no aparecía en el
+// panel "Columnas detectadas" genérico (que itera R_DIMS, el cual no tiene
+// entrada de eNPS). Antes la detección era automática y sin forma de
+// corregirla si fallaba (ni un mensaje de error si no encontraba nada) —
+// ahora hay un selector editable en la pantalla de selección de hojas.
+function rFindEnpsTagCol() {
+  if (R.colOverrides && Object.prototype.hasOwnProperty.call(R.colOverrides, 'eNPS_tag')) {
+    const v = R.colOverrides['eNPS_tag'];
+    return v ? R.headers.indexOf(v) : -1;
+  }
+  const idx = R.headers.findIndex(h => /enps_cat|enps_tag|enps\.tag|enps_oficial/i.test(h));
+  if (idx >= 0) return idx;
+  return (R._enpsTagIdx !== undefined && R._enpsTagIdx >= 0) ? R._enpsTagIdx : -1;
+}
+
+function rSetEnpsOverride(value) {
+  if (!R.colOverrides) R.colOverrides = {};
+  if (value) R.colOverrides['eNPS_tag'] = value; else delete R.colOverrides['eNPS_tag'];
+  rRenderSheetOpts();
+}
+
+// Arma el panel de selección de hojas (General | Clasificaciones |
+// Demográficos | eNPS) a partir del estado ya construido por rProcess
+// (R.sheetDefs/R._demoTmp/R._enpsTagIdx) — separado de rProcess para poder
+// re-renderizar solo esto cuando cambia el override de eNPS, sin tener que
+// re-parsear el archivo ni perder los checkboxes ya marcados.
+function rRenderSheetOpts() {
+  const generalDefs = R.sheetDefs.filter(s => s.type === 'general');
+  const claDefs      = R.sheetDefs.filter(s => s.type === 'cla');
+  const demoDefs     = R.sheetDefs.filter(s => s.type === 'demo');
+
+  function renderSheetGroup(defs, startIdx) {
+    return defs.map((sh, i) => {
+      const gi = startIdx + i;
+      return `<label style="display:flex;align-items:center;gap:8px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;background:var(--surface)">
+        <input type="checkbox" id="rsh${gi}" ${sh.checked?'checked':''} style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"
+               onchange="R.sheetDefs[${gi}].checked=this.checked">
+        <span style="flex:1">${escHtml(sh.label)}</span>
+        ${sh.type==='cla' ? '<span style="font-size:10px;color:var(--text3);margin-left:4px">' + new Set(R.rows.map(r=>String(r[sh.colIdx]||'').trim()).filter(Boolean)).size + ' grupos</span>' : ''}
+      </label>`;
+    }).join('');
+  }
+
+  let html = '';
+  if (generalDefs.length) {
+    html += renderSheetGroup(generalDefs, 0);
+  }
+  if (claDefs.length) {
+    html += `<div style="grid-column:1/-1;margin-top:.5rem;margin-bottom:.25rem;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Clasificaciones</div>`;
+    html += renderSheetGroup(claDefs, generalDefs.length);
+  }
+  if (demoDefs.length) {
+    html += `<div style="grid-column:1/-1;margin-top:.5rem;margin-bottom:.25rem;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Demográficos</div>`;
+    html += renderSheetGroup(demoDefs, generalDefs.length + claDefs.length);
+  }
+
+  const enpsIdx = rFindEnpsTagCol();
+  const enpsCol = enpsIdx >= 0 ? R.headers[enpsIdx] : '';
+  const enpsOverride = R.colOverrides && R.colOverrides['eNPS_tag'];
+  html += `<div style="grid-column:1/-1;margin-top:.5rem">
+    <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem">eNPS</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">
+      <span style="color:${enpsCol ? 'var(--accent)' : '#B23B2E'}">
+        ${enpsCol ? '✓ eNPS detectado (' + escHtml(enpsCol) + ') — se incluirá automáticamente al final de cada tabla' : '✗ No se detectó una columna de categoría eNPS (Promotor/Neutro/Detractor) — selecciónala manualmente si existe'}
+      </span>
+      <select onchange="rSetEnpsOverride(this.value)"
+        style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
+        <option value="">— automático —</option>
+        ${R.headers.map(h => `<option value="${escHtml(h)}" ${enpsOverride === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+
+  document.getElementById('r-sheet-opts').innerHTML = html;
+}
+
 function rProcess(wb, filename, sheetName) {
   // Hoja elegida manualmente (selector) o detectada automáticamente (la de más filas)
   const bestSheet = sheetName || pickBestSheet(wb);
@@ -4944,46 +5022,7 @@ function rProcess(wb, filename, sheetName) {
     R._demoTmp = null;
   }
 
-  // Render sheet options — group: General | Clasificaciones | Demográficos | eNPS
-  const generalDefs  = R.sheetDefs.filter(s => s.type === 'general');
-  const claDefs      = R.sheetDefs.filter(s => s.type === 'cla');
-  const otherDefs    = R.sheetDefs.filter(s => s.type === 'demo' || s.type === 'enps');
-
-  function renderSheetGroup(defs, startIdx) {
-    return defs.map((sh, i) => {
-      const gi = startIdx + i;
-      return `<label style="display:flex;align-items:center;gap:8px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;background:var(--surface)">
-        <input type="checkbox" id="rsh${gi}" ${sh.checked?'checked':''} style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent)"
-               onchange="R.sheetDefs[${gi}].checked=this.checked">
-        <span style="flex:1">${escHtml(sh.label)}</span>
-        ${sh.type==='cla' ? '<span style="font-size:10px;color:var(--text3);margin-left:4px">' + new Set(R.rows.map(r=>String(r[sh.colIdx]||'').trim()).filter(Boolean)).size + ' grupos</span>' : ''}
-      </label>`;
-    }).join('');
-  }
-
-  let html = '';
-  if (generalDefs.length) {
-    html += renderSheetGroup(generalDefs, 0);
-  }
-  if (claDefs.length) {
-    html += `<div style="grid-column:1/-1;margin-top:.5rem;margin-bottom:.25rem;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Clasificaciones</div>`;
-    html += renderSheetGroup(claDefs, generalDefs.length);
-  }
-  if (otherDefs.length) {
-    const demoOnly = otherDefs.filter(s => s.type === 'demo');
-    const enpsOnly = otherDefs.filter(s => s.type === 'enps');
-    if (demoOnly.length) {
-      html += `<div style="grid-column:1/-1;margin-top:.5rem;margin-bottom:.25rem;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Demográficos</div>`;
-      html += renderSheetGroup(demoOnly, generalDefs.length + claDefs.length);
-    }
-    if (enpsOnly.length === 0 && R._enpsTagIdx >= 0) {
-      html += `<div style="grid-column:1/-1;margin-top:.5rem;font-size:12px;color:var(--accent)">
-        ✓ eNPS detectado — se incluirá automáticamente al final de cada tabla
-      </div>`;
-    }
-  }
-
-  document.getElementById('r-sheet-opts').innerHTML = html;
+  rRenderSheetOpts();
 
   document.getElementById('r-upload-wrap').style.display = 'none';
   document.getElementById('r-config-wrap').style.display = 'block';
@@ -9790,10 +9829,9 @@ function rBuildRows(groups) {
   }
 
   // ── eNPS al final ──────────────────────────────────────────────────────
-  // Detect eNPS tag column (text: Promotor/Neutro/Detractor)
-  const enpsTagIdx = R.headers.findIndex(h => /enps_cat|enps_tag|enps\.tag|enps_oficial/i.test(h))
-    !== -1 ? R.headers.findIndex(h => /enps_cat|enps_tag|enps\.tag|enps_oficial/i.test(h))
-    : R._enpsTagIdx >= 0 ? R._enpsTagIdx : -1;
+  // Columna de categoría eNPS (texto: Promotor/Neutro/Detractor) — respeta
+  // el override elegido en el selector de la pantalla de hojas.
+  const enpsTagIdx = rFindEnpsTagCol();
   if (enpsTagIdx >= 0) {
     // eNPS score row
     const enpsRow = ['eNPS', 'dim', ...groups.map(g => {

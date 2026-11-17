@@ -1358,9 +1358,17 @@ tr:hover td { background: var(--bg); }
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
           <div id="rop-title-bar" style="font-size:15px;font-weight:700;color:var(--text1)"></div>
           <div style="display:flex;gap:.5rem">
+            <button class="btn btn-secondary" style="font-size:12px" onclick="ropToggleColorPanel()">🎨 Personalizar colores</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropDownloadPNG()">⬇ Descargar PNG</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropBatchToggle()">📦 Exportar lote PPT</button>
           </div>
+        </div>
+
+        <div id="rop-color-panel-body" class="card" style="display:none;margin-bottom:.75rem">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:10px">
+            Los colores se aplican en vivo a la vista previa de abajo — lo que ves acá es exactamente lo que se exporta a PNG/PPT.
+          </div>
+          <div id="rop-color-panel"></div>
         </div>
         <!-- Marco exterior capturable (incluido en el PNG) — fondo transparente a
              propósito: así, al pegar el PNG sobre una plantilla de PPT ya
@@ -10202,11 +10210,128 @@ let ROP = {
   headers:[], rows:[], mediciones:[], clasCols:[],
   filters: [],
   charts:{ eng:null, agot:null, rd:null, enps:null },
-  colOverrides: {}
+  colOverrides: {},
+  colors: null // se inicializa desde ROP_COLOR_PRESETS.default en ropInitColors()
 };
 
 const ROP_RECURSOS = ['oportunidades','coaching','retroalimentacion','colaboracion','autonomia','optimismo','autoeficacia'];
 const ROP_DEMANDAS = ['presion','cognitivas','emocionales','conflictoderol','trabas'];
+
+// ── Colores editables de los gráficos de One Page ───────────────────────────
+// Antes todo el esquema de colores estaba hardcodeado como strings rgba(...)
+// directo en cada función de render — distintos clientes quieren distinto
+// nivel de contraste o colores de marca, así que ahora vive en ROP.colors
+// (editable en vivo desde el panel "🎨 Personalizar colores") y cada render
+// arma el rgba() final con ropHex2rgba(). Como la exportación (PNG/PPT)
+// siempre captura el DOM EN VIVO (ver ropCaptureFrame), el color elegido se
+// exporta tal cual sin pasos adicionales.
+const ROP_COLOR_PRESETS = {
+  default: {
+    engBar:'#1B3F6E', agotBar:'#C05A2A', compGray:'#AAAAAA', compAmber:'#E8733A',
+    rdRecursos:'#2196F3', rdRecursosDark:'#1B3F6E', rdDemandasOrange:'#EF6C00', rdDemandasRed:'#C62828',
+    rdOrgLine:'#6B7280', rdOptLine:'#27AE60',
+    enpsDetractor:'#C0392B', enpsNeutro:'#FBC02D', enpsPromotor:'#27AE60'
+  },
+  contraste: {
+    engBar:'#0D2847', agotBar:'#9C3D12', compGray:'#888888', compAmber:'#C75A1E',
+    rdRecursos:'#0D47A1', rdRecursosDark:'#0D2847', rdDemandasOrange:'#D84315', rdDemandasRed:'#B71C1C',
+    rdOrgLine:'#424242', rdOptLine:'#1B5E20',
+    enpsDetractor:'#B71C1C', enpsNeutro:'#F9A825', enpsPromotor:'#1B5E20'
+  },
+  suave: {
+    engBar:'#5B82B3', agotBar:'#D98C5F', compGray:'#C4C4C4', compAmber:'#F0A87C',
+    rdRecursos:'#64B5F6', rdRecursosDark:'#5B82B3', rdDemandasOrange:'#FFB74D', rdDemandasRed:'#E57373',
+    rdOrgLine:'#9CA3AF', rdOptLine:'#66BB6A',
+    enpsDetractor:'#E57373', enpsNeutro:'#FFD54F', enpsPromotor:'#81C784'
+  }
+};
+
+function ropHex2rgba(hex, alpha) {
+  const h = String(hex || '').replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${isNaN(r)?0:r},${isNaN(g)?0:g},${isNaN(b)?0:b},${alpha})`;
+}
+
+function ropInitColors() {
+  if (!ROP.colors) ROP.colors = { ...ROP_COLOR_PRESETS.default };
+}
+
+function ropSetColor(key, value) {
+  ropInitColors();
+  ROP.colors[key] = value;
+  ropRenderColorPanel();
+  if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
+}
+
+function ropApplyColorPreset(name) {
+  const preset = ROP_COLOR_PRESETS[name];
+  if (!preset) return;
+  ROP.colors = { ...preset };
+  ropRenderColorPanel();
+  if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
+}
+
+function ropResetColors() { ropApplyColorPreset('default'); }
+
+const ROP_COLOR_FIELDS = [
+  { group: 'Engagement y Agotamiento', items: [
+    { key:'engBar', label:'Barra de Engagement' },
+    { key:'agotBar', label:'Barra de Agotamiento' },
+  ]},
+  { group: 'Recursos y Demandas', items: [
+    { key:'rdRecursos', label:'Recursos (claro)' },
+    { key:'rdRecursosDark', label:'Recursos (oscuro: Optimismo/Autoeficacia)' },
+    { key:'rdDemandasOrange', label:'Demandas (naranja: Presión/Cognitivas)' },
+    { key:'rdDemandasRed', label:'Demandas (rojo: Emocionales/Conflicto/Trabas)' },
+    { key:'rdOrgLine', label:'Línea Promedio Organizacional' },
+    { key:'rdOptLine', label:'Línea Óptimo Organizacional' },
+  ]},
+  { group: 'eNPS', items: [
+    { key:'enpsDetractor', label:'Detractores' },
+    { key:'enpsNeutro', label:'Neutros' },
+    { key:'enpsPromotor', label:'Promotores' },
+  ]},
+  { group: 'Comparativos (otras mediciones/segmentos)', items: [
+    { key:'compGray', label:'Comparativo 1 (gris)' },
+    { key:'compAmber', label:'Comparativo 2 (ámbar)' },
+  ]},
+];
+
+function ropRenderColorPanel() {
+  const container = document.getElementById('rop-color-panel');
+  if (!container) return;
+  ropInitColors();
+  const c = ROP.colors;
+  container.innerHTML = ROP_COLOR_FIELDS.map(g => `
+    <div style="margin-bottom:8px">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${escHtml(g.group)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px">
+        ${g.items.map(it => `
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text)">
+            <input type="color" value="${escHtml(c[it.key] || '#000000')}"
+              oninput="ropSetColor('${escJsAttr(it.key)}', this.value)"
+              style="width:26px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer">
+            ${escHtml(it.label)}
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `).join('') + `
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:4px">
+      <button class="btn btn-secondary" style="font-size:11px" onclick="ropApplyColorPreset('default')">Circular HR (original)</button>
+      <button class="btn btn-secondary" style="font-size:11px" onclick="ropApplyColorPreset('contraste')">Alto contraste</button>
+      <button class="btn btn-secondary" style="font-size:11px" onclick="ropApplyColorPreset('suave')">Suave / pastel</button>
+      <button class="btn btn-secondary" style="font-size:11px" onclick="ropResetColors()">↩ Restablecer</button>
+    </div>
+  `;
+}
+
+function ropToggleColorPanel() {
+  const body = document.getElementById('rop-color-panel-body');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (!open) ropRenderColorPanel();
+}
 
 function ropDrop(e) {
   e.preventDefault();
@@ -10809,7 +10934,8 @@ function ropGetNMin() {
   return (Number.isFinite(v) && v > 0) ? v : 5;
 }
 
-function ropGenerate() {
+function ropGenerate(skipScroll) {
+  ropInitColors();
   ROP_N_MIN = ropGetNMin();
   const showOrg = document.getElementById('rop-show-org').checked;
   // Opciones de limpieza para exportación
@@ -10888,7 +11014,7 @@ function ropGenerate() {
   ropRenderENPS(filterSets);
 
   document.getElementById('rop-preview').style.display = 'block';
-  document.getElementById('rop-preview').scrollIntoView({behavior:'smooth', block:'start'});
+  if (!skipScroll) document.getElementById('rop-preview').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 // N mínimo de confidencialidad para One Page — antes fijo en 5, ahora
@@ -11210,7 +11336,7 @@ function ropRenderEng(filterSets, showOrg) {
     data:{ labels, datasets:[{
       label:'Engagement',
       data: engVals.map((e, i) => filterMetaEng[i] === 'ok' ? e.avg : null),
-      backgroundColor: filterSets.map((_, i) => i === 0 ? 'rgba(27,63,110,0.85)' : 'rgba(170,170,170,0.65)'),
+      backgroundColor: filterSets.map((_, i) => i === 0 ? ropHex2rgba(ROP.colors.engBar,0.85) : ropHex2rgba(ROP.colors.compGray,0.65)),
       borderRadius:5,
       maxBarThickness:72,
       _pcts: engVals.map(e => e.pct),
@@ -11253,7 +11379,7 @@ function ropRenderAgot(filterSets, showOrg) {
     data:{ labels, datasets:[{
       label:'Agotamiento',
       data: agotVals.map((a, i) => filterMetaAgot[i] === 'ok' ? a.avg : null),
-      backgroundColor: filterSets.map((_, i) => i === 0 ? 'rgba(192,90,42,0.85)' : 'rgba(170,170,170,0.65)'),
+      backgroundColor: filterSets.map((_, i) => i === 0 ? ropHex2rgba(ROP.colors.agotBar,0.85) : ropHex2rgba(ROP.colors.compGray,0.65)),
       borderRadius:5,
       maxBarThickness:72,
       _pcts: agotVals.map(a => a.pct),
@@ -11337,23 +11463,24 @@ function ropRenderRD(filterSets) {
   // Per-dimension colors — order must match ROP_RECURSOS + ROP_DEMANDAS (= RD_ORDER of main chart)
   // ROP_RECURSOS: oportunidades, coaching, retroalimentacion, colaboracion, autonomia, optimismo, autoeficacia
   // ROP_DEMANDAS: presion, cognitivas, emocionales, conflictoderol, trabas
+  ropInitColors();
   const dimColors0 = [
-    'rgba(33,150,243,0.85)', // oportunidades       (blue)
-    'rgba(33,150,243,0.85)', // coaching            (blue)
-    'rgba(33,150,243,0.85)', // retroalimentacion   (blue)
-    'rgba(33,150,243,0.85)', // colaboracion        (blue)
-    'rgba(33,150,243,0.85)', // autonomia           (blue)
-    'rgba(27,63,110,0.85)',  // optimismo           (dark navy)
-    'rgba(27,63,110,0.85)',  // autoeficacia        (dark navy)
-    'rgba(239,108,0,0.85)',  // presion             (orange)
-    'rgba(239,108,0,0.85)',  // cognitivas          (orange)
-    'rgba(198,40,40,0.85)',  // emocionales         (red)
-    'rgba(198,40,40,0.85)',  // conflictoderol      (red)
-    'rgba(198,40,40,0.85)',  // trabas              (red)
+    ropHex2rgba(ROP.colors.rdRecursos,0.85),      // oportunidades
+    ropHex2rgba(ROP.colors.rdRecursos,0.85),      // coaching
+    ropHex2rgba(ROP.colors.rdRecursos,0.85),      // retroalimentacion
+    ropHex2rgba(ROP.colors.rdRecursos,0.85),      // colaboracion
+    ropHex2rgba(ROP.colors.rdRecursos,0.85),      // autonomia
+    ropHex2rgba(ROP.colors.rdRecursosDark,0.85),  // optimismo
+    ropHex2rgba(ROP.colors.rdRecursosDark,0.85),  // autoeficacia
+    ropHex2rgba(ROP.colors.rdDemandasOrange,0.85),// presion
+    ropHex2rgba(ROP.colors.rdDemandasOrange,0.85),// cognitivas
+    ropHex2rgba(ROP.colors.rdDemandasRed,0.85),   // emocionales
+    ropHex2rgba(ROP.colors.rdDemandasRed,0.85),   // conflictoderol
+    ropHex2rgba(ROP.colors.rdDemandasRed,0.85),   // trabas
   ];
-  // Comparison filters use gray (matches main chart secondary dataset)
-  const compGray = 'rgba(170,170,170,0.65)';
-  const compAmber = 'rgba(232,115,58,0.65)';
+  // Comparison filters use gray/amber (matches main chart secondary dataset)
+  const compGray = ropHex2rgba(ROP.colors.compGray,0.65);
+  const compAmber = ropHex2rgba(ROP.colors.compAmber,0.65);
 
   const filterMetaRD = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
   const rdNoteCount = filterMetaRD.filter(s => s !== 'ok').length;
@@ -11381,8 +11508,8 @@ function ropRenderRD(filterSets) {
   datasets.push({
     label:'Promedio Organizacional',
     data: dims.map(d => ropCalcDim(d.id, filterSets[0].orgRows)),
-    type:'line', borderColor:'#6b7280', borderWidth:2,
-    borderDash:[5,3], pointRadius:3, pointBackgroundColor:'#6b7280',
+    type:'line', borderColor:ROP.colors.rdOrgLine, borderWidth:2,
+    borderDash:[5,3], pointRadius:3, pointBackgroundColor:ROP.colors.rdOrgLine,
     pointStyle:'line', fill:false, tension:0.1
   });
 
@@ -11392,8 +11519,8 @@ function ropRenderRD(filterSets) {
     datasets.push({
       label:'Óptimo Organizacional',
       data: dims.map(d => ropCalcDim(d.id, optRows)),
-      type:'line', borderColor:'#27AE60', borderWidth:2,
-      borderDash:[5,3], pointRadius:3, pointBackgroundColor:'#27AE60',
+      type:'line', borderColor:ROP.colors.rdOptLine, borderWidth:2,
+      borderDash:[5,3], pointRadius:3, pointBackgroundColor:ROP.colors.rdOptLine,
       pointStyle:'line', fill:false, tension:0.1
     });
   }
@@ -11443,11 +11570,12 @@ function ropRenderENPS(filterSets) {
   const chartLabels = allSets.map(s => s.chartLabel || s.titleLabel || s.label);
   const scores = allSets.map(s => s.enps?.score ?? null);
 
+  ropInitColors();
   const pct = (key) => allSets.map((s, i) => filterMetaEnps[i] === 'ok' ? s.enps[key] / s.enps.total * 100 : null);
   const allDs = [
-    { label:'Detractores', data: pct('detr'),   backgroundColor:'rgba(192,57,43,0.85)',  borderRadius:0, stack:'all', maxBarThickness:48 },
-    { label:'Neutros',     data: pct('neutro'), backgroundColor:'rgba(251,192,45,0.85)', borderRadius:0, stack:'all', maxBarThickness:48 },
-    { label:'Promotores',  data: pct('promo'),  backgroundColor:'rgba(39,174,96,0.85)',  borderRadius:0, stack:'all', maxBarThickness:48 },
+    { label:'Detractores', data: pct('detr'),   backgroundColor:ropHex2rgba(ROP.colors.enpsDetractor,0.85), borderRadius:0, stack:'all', maxBarThickness:48 },
+    { label:'Neutros',     data: pct('neutro'), backgroundColor:ropHex2rgba(ROP.colors.enpsNeutro,0.85),    borderRadius:0, stack:'all', maxBarThickness:48 },
+    { label:'Promotores',  data: pct('promo'),  backgroundColor:ropHex2rgba(ROP.colors.enpsPromotor,0.85), borderRadius:0, stack:'all', maxBarThickness:48 },
   ];
 
   const cfg = new Chart(document.getElementById('rop-chart-enps'), {

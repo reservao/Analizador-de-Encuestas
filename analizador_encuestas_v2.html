@@ -930,6 +930,7 @@ tr:hover td { background: var(--bg); }
 
   <!-- PANEL 5: NUEVAS VARIABLES -->
   <div id="panel5" style="display:none">
+    <div id="g-healthcheck-nv" style="display:none"></div>
     <div class="card">
       <div class="file-bar">
         <div>
@@ -981,8 +982,8 @@ tr:hover td { background: var(--bg); }
       <div class="slbl">Descargar</div>
       <div class="dl-item">
         <div>
-          <div class="dl-title">Excel con nuevas variables</div>
-          <div class="dl-sub">Datos originales + VIGOR, ABSORTION, DEDICATION, VIGOR_BINARY, ABSORTION_BINARY, DEDICATION_BINARY, ALTO_ENGAGEMENT, ALTO_AGOTAMIENTO, ENPS_CAT, ALTO_/BAJO_ por cada palanca</div>
+          <div class="dl-title">Excel completo (recálculo + nuevas variables)</div>
+          <div class="dl-sub">Datos originales + columna CALC_ de cada dimensión (Paso 3) + REVISAR + VIGOR, ABSORTION, DEDICATION, VIGOR_BINARY, ABSORTION_BINARY, DEDICATION_BINARY, ALTO_ENGAGEMENT, ALTO_AGOTAMIENTO, ENPS_CAT, ALTO_/BAJO_ por cada palanca — un solo archivo con todo</div>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="dlNewVars()">⬇ Descargar .xlsx</button>
       </div>
@@ -2052,15 +2053,21 @@ function gHealthSetOverride(key, value) {
   if (!G.colOverrides) G.colOverrides = {};
   if (value) G.colOverrides[key] = value; else delete G.colOverrides[key];
   // El override cambia qué columnas usa detectDimensions, así que hay que
-  // re-detectar e invalidar todo lo que dependía de la detección vieja.
+  // re-detectar e invalidar todo lo que dependía de la detección vieja —
+  // incluyendo NV (Nuevas Variables, Paso 6), que depende de las mismas
+  // columnas pero se cachea aparte.
   G.detected = detectDimensions(G.headers);
   G.rangeResult = null;
   G.calcResult = null;
+  NV = null;
   renderCalc();
+  gRenderHealthCheck('g-healthcheck-nv');
+  const panel5 = document.getElementById('panel5');
+  if (panel5 && panel5.style.display !== 'none') renderNewVars();
 }
 
-function gRenderHealthCheck() {
-  const container = document.getElementById('g-healthcheck');
+function gRenderHealthCheck(containerId) {
+  const container = document.getElementById(containerId || 'g-healthcheck');
   if (!container) return;
   if (!G.headers || !G.headers.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
   const headers = G.headers, overrides = G.colOverrides || {};
@@ -2228,21 +2235,22 @@ function dlRanges() {
   XLSX.writeFile(wb, G.filename.replace(/\.\w+$/,'') + '_reporte_rangos.xlsx');
 }
 
-function dlFull() {
+// Arma el orden de columnas (original + CALC_ de cada dimensión + REVISAR) a
+// partir de G.calcResult — compartido por dlFull() (Paso 3) y dlNewVars()
+// (Paso 6), para que ambas descargas partan de la MISMA base y dejen de ser
+// dos Excel que no conversan entre sí (antes "Nuevas Variables" descargaba
+// solo los datos originales + sus propias columnas derivadas, sin ningún
+// CALC_ de dimensión — dos archivos separados con la mitad de la info cada
+// uno). CALC_ se ubica justo después de la columna sistema si existe; si la
+// dimensión no venía calculada en el Excel, se agrega después del ítem de
+// esa dimensión que esté MÁS A LA DERECHA en el Excel real (por posición de
+// columna, no por el orden en que dim.preguntas los declara).
+function gBuildRecalcCols() {
   const a = G.calcResult;
-  if (!a) return;
+  if (!a) return null;
   const allDims = [...a.errDims, ...a.okDims].filter(d => d.qCols && d.qCols.length);
   const errIdxs = new Set(a.errDims.flatMap(d => d.errRows.map(r => r.rowIdx)));
 
-  // Construir orden de columnas: CALC_ justo después de la columna sistema si existe;
-  // si la dimensión no venía calculada en el Excel (sin columna sistema), se agrega
-  // igual, justo después del ítem de esa dimensión que esté MÁS A LA DERECHA en el
-  // Excel real — antes esas dimensiones quedaban afuera de la descarga por completo
-  // (nunca calzaban contra ningún header), que es justo lo que no debía pasar: si hay
-  // ítems, hay cálculo. OJO: "el último ítem" se decide por posición real de columna
-  // (indexOf en G.headers), NO por el orden en que dim.preguntas los declara — un
-  // archivo real puede traer, p.ej., WE8,WE9,...,WE5,WE7,WE3,WE6 con WE9 último en el
-  // catálogo pero lejos de ser la columna más a la derecha entre los ítems de Engagement.
   const origCols = G.headers;
   const handled = new Set();
   const newCols = [];
@@ -2264,7 +2272,14 @@ function dlFull() {
     if (!d.sysCol && !handled.has(d.calcColName)) newCols.push({ col: d.calcColName, isCalc: true, dim: d });
   }
   newCols.push({ col: 'REVISAR', isCalc: false, dim: null, isRevisar: true });
+  return { newCols, errIdxs };
+}
 
+// Convierte el resultado de gBuildRecalcCols() en filas de Excel. Separado
+// de gBuildRecalcCols() porque dlNewVars() necesita las columnas de
+// identidad (newCols) ANTES de decidir las columnas propias que agrega al
+// final, pero las FILAS recién al combinar todo.
+function gRecalcColsToRows(newCols, errIdxs) {
   const headerRow = newCols.map(c => c.col);
   const dataRows = G.rows.map((row, ri) => {
     return newCols.map(c => {
@@ -2277,6 +2292,14 @@ function dlFull() {
       return v === undefined ? '' : v;
     });
   });
+  return { headerRow, dataRows };
+}
+
+function dlFull() {
+  if (!G.calcResult) G.calcResult = runCalcAnalysis(G.headers, G.rows, G.detected);
+  const built = gBuildRecalcCols();
+  if (!built) return;
+  const { headerRow, dataRows } = gRecalcColsToRows(built.newCols, built.errIdxs);
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
@@ -2956,6 +2979,7 @@ function fmtN(n, total) { return n + ' <span style="font-size:13px;color:var(--t
 
 function renderNewVars() {
   if (!NV) NV = runNewVars();
+  gRenderHealthCheck('g-healthcheck-nv');
   const r = NV;
 
   document.getElementById('p5-fname').textContent = G.filename;
@@ -3104,24 +3128,35 @@ function renderNewVars() {
       </table></div>`;
 }
 
+// Descarga única y completa de Revisión Resultados: datos originales + CALC_
+// de cada dimensión (Paso 3) + REVISAR + las variables derivadas de este
+// paso (Vigor/Absorción/Dedicación, Alto Engagement/Agotamiento, eNPS,
+// Óptimo/Crítico, palancas Alto/Bajo). Antes este botón bajaba un Excel
+// aparte con solo los datos originales + estas columnas — sin los
+// promedios de dimensión que ya se habían calculado en el paso anterior —
+// dejando dos archivos ("_recalculado" y "_nuevas_variables") que no
+// conversaban entre sí. Ahora parte de la MISMA base que dlFull()
+// (gBuildRecalcCols/gRecalcColsToRows) y le agrega sus propias columnas al
+// final, así queda un solo Excel con todo.
 function dlNewVars() {
-  if (!NV) return;
-  const palancaCols = PALANCAS_IDS.flatMap(id => [
-    `ALTO_${id.toUpperCase()}`, `BAJO_${id.toUpperCase()}`
-  ]);
-  const newCols = [
+  if (!G.calcResult) G.calcResult = runCalcAnalysis(G.headers, G.rows, G.detected);
+  if (!NV) NV = runNewVars();
+  const built = gBuildRecalcCols();
+  if (!built) return;
+  const { headerRow: baseHeaderRow, dataRows: baseDataRows } = gRecalcColsToRows(built.newCols, built.errIdxs);
+
+  const extraColNames = [
     'VIGOR','ABSORTION','DEDICATION',
     'VIGOR_BINARY','ABSORTION_BINARY','DEDICATION_BINARY',
     'ALTO_ENGAGEMENT','ALTO_AGOTAMIENTO','ENPS_CAT',
     'CRIT_AGOT','OPT_AGOT','CRIT_ENG','OPT_ENG',
     'OPTIMO_ORG','CRIT_ORG',
-    ...palancaCols
+    ...PALANCAS_IDS.flatMap(id => [`ALTO_${id.toUpperCase()}`, `BAJO_${id.toUpperCase()}`])
   ];
-  const headerRow = [...G.headers, ...newCols];
-  const dataRows = G.rows.map((row, i) => {
+  const headerRow = [...baseHeaderRow, ...extraColNames];
+  const dataRows = baseDataRows.map((baseRow, i) => {
     const r = NV.rows[i];
-    return [
-      ...row,
+    const extra = [
       r.vigor, r.absortion, r.dedication,
       r.vigorBin, r.absortionBin, r.dedicationBin,
       r.altoEng, r.altoAgot, r.enpsCat,
@@ -3129,7 +3164,9 @@ function dlNewVars() {
       r.optimoOrg, r.critOrg,
       ...PALANCAS_IDS.flatMap(id => [r.palancas[id].alto, r.palancas[id].bajo])
     ].map(v => v === null || v === undefined ? '' : v);
+    return [...baseRow, ...extra];
   });
+
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
   ws['!cols'] = headerRow.map(() => ({ wch: 20 }));

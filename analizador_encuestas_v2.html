@@ -1360,6 +1360,7 @@ tr:hover td { background: var(--bg); }
           <div id="rop-title-bar" style="font-size:15px;font-weight:700;color:var(--text1)"></div>
           <div style="display:flex;gap:.5rem">
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropToggleColorPanel()">🎨 Personalizar colores</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="ropToggleFontPanel()">🔤 Personalizar textos</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropDownloadPNG()">⬇ Descargar PNG</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropBatchToggle()">📦 Exportar lote PPT</button>
           </div>
@@ -1370,6 +1371,13 @@ tr:hover td { background: var(--bg); }
             Los colores se aplican en vivo a la vista previa de abajo — lo que ves acá es exactamente lo que se exporta a PNG/PPT.
           </div>
           <div id="rop-color-panel"></div>
+        </div>
+
+        <div id="rop-font-panel-body" class="card" style="display:none;margin-bottom:.75rem">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:10px">
+            Tamaño, negrita y color de cada texto, por separado — ej. agrandar solo las etiquetas de palancas sin tocar el eNPS, o poner en negrita solo las etiquetas de año de Engagement/Agotamiento. Se aplica en vivo y se exporta igual.
+          </div>
+          <div id="rop-font-panel"></div>
         </div>
         <!-- Marco exterior capturable (incluido en el PNG) — fondo transparente a
              propósito: así, al pegar el PNG sobre una plantilla de PPT ya
@@ -1397,7 +1405,7 @@ tr:hover td { background: var(--bg); }
           <!-- Label vertical: col ½ (0–2.5%), filas 2–5 (10–50%) -->
           <div style="position:absolute;left:0;width:2.5%;top:10%;height:40%;background:#dbeafe;border:1px solid #3b82f6;overflow:hidden">
             <svg viewBox="0 0 10 100" style="width:100%;height:100%;display:block" xmlns="http://www.w3.org/2000/svg">
-              <text x="5" y="50" text-anchor="middle" dominant-baseline="central" transform="rotate(-90,5,50)" font-size="6.5" font-weight="bold" fill="#1d4ed8" font-family="Arial,sans-serif" letter-spacing="0.8">ENGAGEMENT</text>
+              <text id="rop-lbl-eng" x="5" y="50" text-anchor="middle" dominant-baseline="central" transform="rotate(-90,5,50)" font-size="6.5" font-weight="bold" fill="#1d4ed8" font-family="Arial,sans-serif" letter-spacing="0.8">ENGAGEMENT</text>
             </svg>
           </div>
           <!-- Gráfico: cols 2–7 (5–35%), filas 2–4 (10–40%) -->
@@ -1411,7 +1419,7 @@ tr:hover td { background: var(--bg); }
           <!-- Label vertical: col ½ (0–2.5%), filas 7–10 (60–100%) -->
           <div style="position:absolute;left:0;width:2.5%;top:60%;height:40%;background:#ffe4e6;border:1px solid #f87171;overflow:hidden">
             <svg viewBox="0 0 10 100" style="width:100%;height:100%;display:block" xmlns="http://www.w3.org/2000/svg">
-              <text x="5" y="50" text-anchor="middle" dominant-baseline="central" transform="rotate(-90,5,50)" font-size="6.5" font-weight="bold" fill="#dc2626" font-family="Arial,sans-serif" letter-spacing="0.8">AGOTAMIENTO</text>
+              <text id="rop-lbl-agot" x="5" y="50" text-anchor="middle" dominant-baseline="central" transform="rotate(-90,5,50)" font-size="6.5" font-weight="bold" fill="#dc2626" font-family="Arial,sans-serif" letter-spacing="0.8">AGOTAMIENTO</text>
             </svg>
           </div>
           <!-- Gráfico: cols 2–7 (5–35%), filas 7–9 (60–90%) -->
@@ -10445,6 +10453,161 @@ function ropToggleColorPanel() {
   if (!open) ropRenderColorPanel();
 }
 
+// ── Tipografía editable de los gráficos de One Page ─────────────────────────
+// Mismo patrón que ROP.colors/ROP_COLOR_PRESETS, pero para tamaño/negrita/
+// color de texto, con un rol por CADA elemento tipográfico identificable del
+// One Page — para que, por ejemplo, se puedan agrandar las etiquetas de
+// palancas (rdAxis) sin tocar el tamaño del eNPS (enpsValue/enpsAxis), o
+// poner en negrita solo las etiquetas de año de Engagement/Agotamiento
+// (engAgotAxis). `size` es un multiplicador (1 = tamaño original); `color`
+// en `null` significa "automático" — mantiene el color contextual que ya
+// tenía ese texto (ej. blanco sobre barra vs. oscuro sobre fondo blanco en
+// rdValue, o azul/rojo en sectionLabel) en vez de forzar un único color.
+const ROP_FONT_DEFAULTS = {
+  pageTitle:      { size:1, bold:true,  color:'#1e3a5f', label:'Título de la página (segmento)' },
+  sectionLabel:   { size:1, bold:true,  color:null,      label:'Etiquetas laterales "ENGAGEMENT"/"AGOTAMIENTO"' },
+  engAgotAxis:    { size:1, bold:false, color:'#333333', label:'Engagement/Agotamiento: etiquetas de medición (eje X)' },
+  engAgotValue:   { size:1, bold:true,  color:'#333333', label:'Engagement/Agotamiento: valor sobre la barra' },
+  engAgotBadge:   { size:1, bold:true,  color:'#222222', label:'Engagement/Agotamiento: badge % circular' },
+  engAgotSummary: { size:1, bold:false, color:null,      label:'Engagement/Agotamiento: texto "Promedio Organizacional"' },
+  rdAxis:         { size:1, bold:false, color:'#333333', label:'Recursos y Demandas: nombres de palancas (eje X)' },
+  rdValue:        { size:1, bold:true,  color:null,      label:'Recursos y Demandas: valores sobre las barras' },
+  rdLegend:       { size:1, bold:false, color:'#333333', label:'Recursos y Demandas: leyenda' },
+  enpsAxis:       { size:1, bold:false, color:'#333333', label:'eNPS: etiquetas de medición (eje Y)' },
+  enpsValue:      { size:1, bold:true,  color:'#1a1a1a', label:'eNPS: porcentajes dentro de las barras' },
+  enpsScore:      { size:1, bold:true,  color:'#ffffff', label:'eNPS: badge circular de puntaje' },
+  enpsLegend:     { size:1, bold:false, color:'#333333', label:'eNPS: leyenda (Detractores/Neutros/Promotores)' },
+};
+
+function ropInitFonts() {
+  if (!ROP.fonts) {
+    ROP.fonts = {};
+    Object.keys(ROP_FONT_DEFAULTS).forEach(k => {
+      const d = ROP_FONT_DEFAULTS[k];
+      ROP.fonts[k] = { size: d.size, bold: d.bold, color: d.color };
+    });
+  }
+}
+// Tamaño final en px a partir del tamaño base original (lo que ya tenía
+// hardcodeado ese texto) multiplicado por el factor elegido para ese rol.
+function ropFontSize(role, basePx) {
+  ropInitFonts();
+  const f = ROP.fonts[role];
+  return Math.round(basePx * (f ? f.size : 1));
+}
+function ropFontWeightStr(role, baseBold) {
+  ropInitFonts();
+  const f = ROP.fonts[role];
+  const bold = f ? f.bold : baseBold;
+  return bold ? 'bold' : 'normal';
+}
+// `fallback` es el color que ese texto usaría si el rol está en "automático".
+function ropFontColor(role, fallback) {
+  ropInitFonts();
+  const f = ROP.fonts[role];
+  if (!f || f.color === null || f.color === undefined || f.color === '') return fallback;
+  return f.color;
+}
+// Arma el string de `ctx.font` para los plugins de Canvas (value labels,
+// badges) a partir del rol — reemplaza los `ctx.font = 'bold 12px Inter...'`
+// hardcodeados uno por uno.
+function ropCanvasFont(role, basePx, baseBold) {
+  return `${ropFontWeightStr(role, baseBold)} ${ropFontSize(role, basePx)}px Inter,sans-serif`;
+}
+
+function ropSetFont(role, field, value) {
+  ropInitFonts();
+  if (!ROP.fonts[role]) return;
+  if (field === 'size') ROP.fonts[role].size = parseFloat(value) || 1;
+  else if (field === 'bold') ROP.fonts[role].bold = !!value;
+  else if (field === 'color') ROP.fonts[role].color = value || null;
+  ropRenderFontPanel();
+  if (document.getElementById('rop-preview').style.display !== 'none') { ropApplyStaticFonts(); ropGenerate(true); }
+}
+
+function ropResetFonts() {
+  ROP.fonts = null;
+  ropInitFonts();
+  ropRenderFontPanel();
+  if (document.getElementById('rop-preview').style.display !== 'none') { ropApplyStaticFonts(); ropGenerate(true); }
+}
+
+// Aplica los roles que NO son gráficos de Chart.js (título, etiquetas
+// laterales, resumen de Engagement/Agotamiento) directamente al DOM. Se
+// llama junto con ropGenerate() cada vez que cambia un override, y también
+// desde dentro de ropRenderEng/ropRenderAgot (que reconstruyen el HTML del
+// resumen) para no perder el estilo al regenerar.
+function ropApplyStaticFonts() {
+  ropInitFonts();
+  const titleBar = document.getElementById('rop-title-bar');
+  const segTitle = document.getElementById('rop-seg-title');
+  const pt = ROP.fonts.pageTitle;
+  if (titleBar) { titleBar.style.fontSize = ropFontSize('pageTitle', 15) + 'px'; titleBar.style.fontWeight = ropFontWeightStr('pageTitle', true); if (pt.color) titleBar.style.color = pt.color; }
+  if (segTitle) { segTitle.style.fontSize = ropFontSize('pageTitle', 14) + 'px'; segTitle.style.fontWeight = ropFontWeightStr('pageTitle', true); segTitle.style.color = ropFontColor('pageTitle', '#1e3a5f'); }
+
+  const lblEng = document.getElementById('rop-lbl-eng');
+  const lblAgot = document.getElementById('rop-lbl-agot');
+  const slSize = ropFontSize('sectionLabel', 6.5);
+  const slWeight = ropFontWeightStr('sectionLabel', true);
+  if (lblEng) { lblEng.setAttribute('font-size', slSize); lblEng.setAttribute('font-weight', slWeight); lblEng.setAttribute('fill', ropFontColor('sectionLabel', '#1d4ed8')); }
+  if (lblAgot) { lblAgot.setAttribute('font-size', slSize); lblAgot.setAttribute('font-weight', slWeight); lblAgot.setAttribute('fill', ropFontColor('sectionLabel', '#dc2626')); }
+
+  const sumEng = document.getElementById('rop-sum-eng');
+  const sumAgot = document.getElementById('rop-sum-agot');
+  const esSize = ropFontSize('engAgotSummary', 11) + 'px';
+  const esWeight = ropFontWeightStr('engAgotSummary', false);
+  [sumEng, sumAgot].forEach(el => {
+    if (!el) return;
+    el.style.fontSize = esSize;
+    el.style.fontWeight = esWeight;
+    if (ROP.fonts.engAgotSummary.color) el.style.color = ROP.fonts.engAgotSummary.color;
+  });
+}
+
+const ROP_FONT_FIELDS = Object.keys(ROP_FONT_DEFAULTS);
+
+function ropRenderFontPanel() {
+  const container = document.getElementById('rop-font-panel');
+  if (!container) return;
+  ropInitFonts();
+  container.innerHTML = ROP_FONT_FIELDS.map(role => {
+    const f = ROP.fonts[role];
+    const d = ROP_FONT_DEFAULTS[role];
+    const colorVal = f.color || d.color || '#333333';
+    return `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;min-width:220px;font-size:12px">${escHtml(d.label)}</span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2)">
+        Tamaño
+        <input type="range" min="0.5" max="2" step="0.1" value="${f.size}"
+          oninput="ropSetFont('${role}','size', this.value); this.nextElementSibling.textContent = Math.round(this.value*100)+'%'"
+          style="width:80px;vertical-align:middle">
+        <span style="width:34px;display:inline-block">${Math.round(f.size*100)}%</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" ${f.bold?'checked':''} onchange="ropSetFont('${role}','bold', this.checked)"> Negrita
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2)">
+        <input type="color" value="${colorVal}"
+          oninput="ropSetFont('${role}','color', this.value)"
+          style="width:24px;height:20px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer">
+        ${d.color === null ? `<button type="button" class="btn btn-secondary" style="font-size:10px;padding:2px 6px" onclick="ropSetFont('${role}','color','')">auto</button>` : ''}
+      </label>
+    </div>`;
+  }).join('') + `
+    <div style="margin-top:8px">
+      <button class="btn btn-secondary" style="font-size:11px" onclick="ropResetFonts()">↩ Restablecer tamaños y colores de texto</button>
+    </div>
+  `;
+}
+
+function ropToggleFontPanel() {
+  const body = document.getElementById('rop-font-panel-body');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (!open) ropRenderFontPanel();
+}
+
 function ropDrop(e) {
   e.preventDefault();
   document.getElementById('rop-dz').classList.remove('drag-over');
@@ -11051,6 +11214,7 @@ function ropGetNMin() {
 
 function ropGenerate(skipScroll) {
   ropInitColors();
+  ropInitFonts();
   ROP_N_MIN = ropGetNMin();
   const showOrg = document.getElementById('rop-show-org').checked;
   // Opciones de limpieza para exportación
@@ -11105,6 +11269,7 @@ function ropGenerate(skipScroll) {
   const primaryFs = filterSets[primaryIdx];
   const pageSegLabel = primaryFs.segs.length ? primaryFs.segs.join(' › ') : primaryFs.titleLabel;
   document.getElementById('rop-seg-title').textContent = ropHideTitle ? '' : pageSegLabel;
+  ropApplyStaticFonts();
 
   // Nota al pie (también dentro del marco capturable): si se están comparando segmentos
   // distintos entre sí, se listan todos para no perder esa información — como el título
@@ -11246,16 +11411,16 @@ const ropRDValPlugin = {
         if (v == null || isNaN(v)) return;
         const barH = barBottom - bar.y;
         const txt = Number(v).toFixed(2);
-        ctx.font = 'bold 11px Inter,sans-serif';
+        ctx.font = ropCanvasFont('rdValue', 11, true);
         ctx.textAlign = 'center';
         if (barH > 22) {
           // Dentro de la barra, pegado a la base inferior (igual que el gráfico predeterminado)
-          ctx.fillStyle = '#fff';
+          ctx.fillStyle = ropFontColor('rdValue', '#fff');
           ctx.textBaseline = 'bottom';
           ctx.fillText(txt, bar.x, barBottom - 4);
         } else {
           // Barra muy corta: el texto no cabe adentro, se dibuja justo arriba
-          ctx.fillStyle = '#1e293b';
+          ctx.fillStyle = ropFontColor('rdValue', '#1e293b');
           ctx.textBaseline = 'bottom';
           ctx.fillText(txt, bar.x, bar.y - 2);
         }
@@ -11277,8 +11442,8 @@ const ropValLabelPlugin = {
         const v = ds.data[i];
         if (v == null || isNaN(v)) return;
         ctx.save();
-        ctx.fillStyle = '#333';
-        ctx.font = 'bold 12px Inter,sans-serif';
+        ctx.fillStyle = ropFontColor('engAgotValue', '#333');
+        ctx.font = ropCanvasFont('engAgotValue', 12, true);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(Number(v).toFixed(2), bar.x, bar.y - 2);
@@ -11306,7 +11471,9 @@ const ropPctBadgePlugin = {
         const x   = bar.x;
         const barH = Math.abs(bar.base - bar.y);
         if (barH < 24) return;
-        const r = Math.min(12, barH * 0.25);
+        ropInitFonts();
+        const badgeScale = ROP.fonts.engAgotBadge.size;
+        const r = Math.min(12, barH * 0.25) * badgeScale;
         // Position: use y2 scale when available so badge moves with pct value;
         // otherwise fall back to fixed 62% of bar height
         let y;
@@ -11331,8 +11498,10 @@ const ropPctBadgePlugin = {
         ctx.lineWidth = 1.5;
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = '#222';
-        ctx.font = `bold ${Math.max(7, Math.min(9, r - 1))}px Inter,sans-serif`;
+        ctx.fillStyle = ropFontColor('engAgotBadge', '#222');
+        // El tamaño ya quedó escalado al definir "r" más arriba — acá solo se
+        // aplica negrita/color del rol, sin volver a multiplicar el tamaño.
+        ctx.font = `${ropFontWeightStr('engAgotBadge', true)} ${Math.max(7, Math.min(9, r - 1))}px Inter,sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(Math.round(pct) + '%', x, y);
@@ -11357,11 +11526,11 @@ const ropEnpsSegLabels = {
         const cx = (bar.base + bar.x) / 2;
         const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
         ctx.save();
-        ctx.font = '700 13px Inter,sans-serif';
+        ctx.font = ropCanvasFont('enpsValue', 13, true);
         const textW = ctx.measureText(txt).width;
         if (barW >= textW + 10) {
           // Cabe dentro del segmento: texto centrado
-          ctx.fillStyle = '#1a1a1a';
+          ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(txt, cx, bar.y);
@@ -11377,7 +11546,7 @@ const ropEnpsSegLabels = {
           ctx.moveTo(cx, bar.y - halfH);
           ctx.lineTo(cx, topY + 11);
           ctx.stroke();
-          ctx.fillStyle = '#1a1a1a';
+          ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
           ctx.fillText(txt, cx, topY);
@@ -11396,8 +11565,12 @@ const ropEnpsBadgePlugin = {
     const scores = chart.config._enpsScores;
     const n = chart.data.labels.length;
     const rowH = (chartArea.bottom - chartArea.top) / Math.max(n, 1);
-    const r = Math.min(52, Math.floor(rowH * 0.48));
+    ropInitFonts();
+    const scoreScale = ROP.fonts.enpsScore.size;
+    const r = Math.min(52, Math.floor(rowH * 0.48)) * scoreScale;
     const fontSize = Math.max(13, Math.min(20, Math.floor(r * 0.46)));
+    const scoreWeight = ropFontWeightStr('enpsScore', true);
+    const scoreColor = ropFontColor('enpsScore', '#fff');
     const xOff = r + 10;
     chart.data.labels.forEach((_, i) => {
       const score = scores[i];
@@ -11409,16 +11582,19 @@ const ropEnpsBadgePlugin = {
       ctx.arc(x, y, r, 0, Math.PI*2);
       ctx.fillStyle = '#111111';
       ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = `bold ${fontSize}px Inter,sans-serif`;
+      ctx.fillStyle = scoreColor;
+      ctx.font = `${scoreWeight} ${fontSize}px Inter,sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText((score>=0?'+':'')+Math.round(score)+'%', x, y);
       ctx.restore();
     });
+    // La etiqueta "eNPS" de abajo queda SIEMPRE oscura (se dibuja sobre fondo
+    // blanco, no sobre el círculo negro) — el color del rol solo aplica al
+    // número adentro del círculo, donde sí tiene sentido elegirlo.
     ctx.save();
     ctx.fillStyle = '#333';
-    ctx.font = 'bold 10px Inter,sans-serif';
+    ctx.font = `${scoreWeight} 10px Inter,sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillText('eNPS', chartArea.right + xOff, chartArea.bottom + 16);
     ctx.restore();
@@ -11445,6 +11621,8 @@ function ropRenderEng(filterSets, showOrg) {
   const filterMetaEng = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
   const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
   const engVals = filterSets.map(fs => ropCalcEng(fs.rows));
+  const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
+  const axisColor = ropFontColor('engAgotAxis', '#333');
 
   ROP.charts.eng = new Chart(document.getElementById('rop-chart-eng'), {
     type:'bar',
@@ -11458,15 +11636,20 @@ function ropRenderEng(filterSets, showOrg) {
     }]},
     plugins:[ropValLabelPlugin, ropPctBadgePlugin, ropConfidentialPlugin],
     options:{
-      responsive:true, maintainAspectRatio:false,
+      // devicePixelRatio alto: html2canvas copia el BITMAP ya existente de este
+      // canvas al exportar (no lo re-vectoriza), así que si Chart.js lo dibuja a
+      // baja resolución interna, queda borroso al ampliar sin importar cuánto se
+      // escale la captura final — acá se fuerza una resolución interna generosa
+      // para que la exportación a ROP_EXPORT_W×H (4K) tenga detalle real.
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
       layout:{ padding:{ top:18 } },
       _valLabels:true,
       plugins:{ legend:{display:false},
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '—' } } },
       scales:{
-        y:{ min:0, max:6, ticks:{stepSize:1,font:{size:11},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
+        y:{ min:0, max:6, ticks:{stepSize:1,font:axisFont,color:axisColor}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:{size:11},color:'#333'} }
+        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor} }
       }
     }
   });
@@ -11488,6 +11671,8 @@ function ropRenderAgot(filterSets, showOrg) {
   const filterMetaAgot = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
   const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
   const agotVals = filterSets.map(fs => ropCalcAgot(fs.rows));
+  const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
+  const axisColor = ropFontColor('engAgotAxis', '#333');
 
   ROP.charts.agot = new Chart(document.getElementById('rop-chart-agot'), {
     type:'bar',
@@ -11501,15 +11686,15 @@ function ropRenderAgot(filterSets, showOrg) {
     }]},
     plugins:[ropValLabelPlugin, ropPctBadgePlugin, ropConfidentialPlugin],
     options:{
-      responsive:true, maintainAspectRatio:false,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
       layout:{ padding:{ top:18 } },
       _valLabels:true,
       plugins:{ legend:{display:false},
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '—' } } },
       scales:{
-        y:{ min:1, max:4, ticks:{stepSize:1,font:{size:11},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
+        y:{ min:1, max:4, ticks:{stepSize:1,font:axisFont,color:axisColor}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:{size:11},color:'#333'} }
+        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor} }
       }
     }
   });
@@ -11640,18 +11825,24 @@ function ropRenderRD(filterSets) {
     });
   }
 
+  const rdAxisFont = { size: ropFontSize('rdAxis', 10), weight: ropFontWeightStr('rdAxis', false) };
+  const rdAxisFontX = { size: ropFontSize('rdAxis', 8), weight: ropFontWeightStr('rdAxis', false) };
+  const rdAxisColor = ropFontColor('rdAxis', '#333');
+  const rdLegendFont = { size: ropFontSize('rdLegend', 10), weight: ropFontWeightStr('rdLegend', false) };
+  const rdLegendColor = ropFontColor('rdLegend', '#333');
+
   ROP.charts.rd = new Chart(document.getElementById('rop-chart-rd'), {
     type:'bar',
     data:{ labels, datasets },
     plugins:[ropRDValPlugin, ropConfidentialPlugin],
     options:{
-      responsive:true, maintainAspectRatio:false,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
       layout:{ padding:{ top: 10, bottom: rdNoteCount * 22 + 10 } },
       plugins:{
         legend:{
           display:true, position:'top',
           labels:{
-            font:{size:10}, color:'#333', boxWidth:28, padding:10, usePointStyle:true,
+            font:rdLegendFont, color:rdLegendColor, boxWidth:28, padding:10, usePointStyle:true,
             pointStyleWidth:24,
             filter: (item, data) => {
               const ds = data.datasets[item.datasetIndex];
@@ -11663,8 +11854,8 @@ function ropRenderRD(filterSets) {
         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y != null ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` : '—' } }
       },
       scales:{
-        y:{ min:1, max:5, ticks:{stepSize:1,font:{size:10},color:'#333'}, grid:{color:'rgba(0,0,0,.05)'} },
-        x:{ grid:{display:false}, ticks:{font:{size:8}, color:'#333', maxRotation:40, minRotation:20, autoSkip:false} }
+        y:{ min:1, max:5, ticks:{stepSize:1,font:rdAxisFont,color:rdAxisColor}, grid:{color:'rgba(0,0,0,.05)'} },
+        x:{ grid:{display:false}, ticks:{font:rdAxisFontX, color:rdAxisColor, maxRotation:40, minRotation:20, autoSkip:false} }
       }
     }
   });
@@ -11693,24 +11884,29 @@ function ropRenderENPS(filterSets) {
     { label:'Promotores',  data: pct('promo'),  backgroundColor:ropHex2rgba(ROP.colors.enpsPromotor,0.85), borderRadius:0, stack:'all', maxBarThickness:48 },
   ];
 
+  const enpsAxisFont = { size: ropFontSize('enpsAxis', 11), weight: ropFontWeightStr('enpsAxis', false) };
+  const enpsAxisColor = ropFontColor('enpsAxis', '#333');
+  const enpsLegendFont = { size: ropFontSize('enpsLegend', 11), weight: ropFontWeightStr('enpsLegend', false) };
+  const enpsLegendColor = ropFontColor('enpsLegend', '#333');
+
   const cfg = new Chart(document.getElementById('rop-chart-enps'), {
     type:'bar',
     data:{ labels:chartLabels, datasets:allDs },
     plugins:[ropEnpsSegLabels, ropEnpsBadgePlugin, ropConfidentialPlugin],
     options:{
       indexAxis:'y',
-      responsive:true, maintainAspectRatio:false,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
       layout:{ padding:{ top:22, right:130, bottom:18 } },
       plugins:{
         legend:{
           display:true, position:'bottom',
-          labels:{ font:{size:11}, color:'#333', boxWidth:10, padding:6 }
+          labels:{ font:enpsLegendFont, color:enpsLegendColor, boxWidth:10, padding:6 }
         },
         tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: ${ctx.parsed.x.toFixed(1)}%` } }
       },
       scales:{
-        x:{ stacked:true, min:0, max:100, ticks:{callback:v=>v+'%', font:{size:11}, color:'#333'}, grid:{display:false}, border:{display:false} },
-        y:{ stacked:true, ticks:{font:{size:11},color:'#333'}, grid:{display:false}, border:{display:false} }
+        x:{ stacked:true, min:0, max:100, ticks:{callback:v=>v+'%', font:enpsAxisFont, color:enpsAxisColor}, grid:{display:false}, border:{display:false} },
+        y:{ stacked:true, ticks:{font:enpsAxisFont,color:enpsAxisColor}, grid:{display:false}, border:{display:false} }
       }
     }
   });
@@ -11719,12 +11915,17 @@ function ropRenderENPS(filterSets) {
   ROP.charts.enps = cfg;
 }
 
-// 1280×720 = exactamente una lámina PPT widescreen (13.333"×7.5") a 96dpi — el
-// mismo pixel-a-pulgada que usa PowerPoint por defecto al insertar una imagen.
-// Antes se capturaba al ancho que tuviera la ventana del navegador en ese
-// momento (impredecible) ×2 (scale), dando imágenes de 2000-3000+ px que
-// quedaban enormes respecto a la lámina y había que achicar a mano cada vez.
-//
+// Tamaño final de exportación — 16:9, igual que una lámina PPT widescreen
+// (13.333"×7.5"). Antes era 1280×720 (96dpi exactos de PowerPoint): se veía
+// nítido insertado tal cual en una lámina, pero al proyectar en pantalla
+// grande o hacer zoom (ej. en una reunión) se notaba pixelado muy rápido —
+// 1280×720 es apenas Full HD/2. Ahora se exporta a 4K (3840×2160, 3x) — la
+// imagen sigue entrando perfecto en la misma lámina de 13.333×7.5in (el
+// tamaño físico no cambia, solo la densidad de píxeles), pero aguanta mucho
+// más zoom/proyección antes de pixelarse. PNG a 4K pesa más (unos pocos MB
+// en vez de unos cientos de KB) pero sigue siendo liviano para descargar.
+const ROP_EXPORT_W = 3840, ROP_EXPORT_H = 2160;
+
 // La primera versión de este arreglo forzaba el ancho del marco EN VIVO
 // (visible en pantalla) a 1280px antes de capturar, y lo restauraba después.
 // Eso rompía la vista: los canvas de Chart.js ya estaban dibujados a su
@@ -11734,23 +11935,23 @@ function ropRenderENPS(filterSets) {
 // visible quedaba atascado en ese estado roto.
 //
 // Ahora se captura el marco TAL CUAL se ve en pantalla (sin tocar su
-// tamaño) y recién después se reescala la IMAGEN ya capturada a 1280×720 con
-// un canvas intermedio — nunca se toca el DOM en vivo, así que no hay forma
-// de que los gráficos queden a medio redibujar.
+// tamaño) y recién después se reescala la IMAGEN ya capturada al tamaño
+// final con un canvas intermedio — nunca se toca el DOM en vivo, así que no
+// hay forma de que los gráficos queden a medio redibujar.
 function ropCaptureFrame(wrap) {
   // scale:1 capturaba al tamaño EN PANTALLA del marco (normalmente mucho más chico
-  // que 1280×720, ej. ~640×360 en una ventana angosta), y ese bitmap de baja
+  // que el tamaño final, ej. ~640×360 en una ventana angosta), y ese bitmap de baja
   // resolución se estiraba después al tamaño final — quedaba borroso/pixelado.
   // Se calcula un factor de escala para que la captura nativa sea siempre, como
-  // mínimo, 1280×720 (y al menos el doble de nítida con el piso de 2), así el
-  // reescalado final del canvas intermedio siempre reduce (nunca agranda).
+  // mínimo, ROP_EXPORT_W×ROP_EXPORT_H (y al menos el doble de nítida con el piso
+  // de 2), así el reescalado final del canvas intermedio siempre reduce (nunca agranda).
   const rect = wrap.getBoundingClientRect();
-  const scale = Math.max(2, 1280 / rect.width, 720 / rect.height);
+  const scale = Math.max(2, ROP_EXPORT_W / rect.width, ROP_EXPORT_H / rect.height);
   return html2canvas(wrap, { backgroundColor: null, scale }).then(canvas => {
     const target = document.createElement('canvas');
-    target.width = 1280;
-    target.height = 720;
-    target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 1280, 720);
+    target.width = ROP_EXPORT_W;
+    target.height = ROP_EXPORT_H;
+    target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, ROP_EXPORT_W, ROP_EXPORT_H);
     return target;
   });
 }
@@ -11865,6 +12066,9 @@ async function ropBatchRenderOne(filterSpec) {
   // Actualizar títulos (rop-seg-title está dentro del marco capturable)
   document.getElementById('rop-title-bar').textContent = ropHideTitle ? '' : filterSpec.titleLabel;
   document.getElementById('rop-seg-title').textContent  = ropHideTitle ? '' : filterSpec.titleLabel;
+  ropInitColors();
+  ropInitFonts();
+  ropApplyStaticFonts();
   // El lote exporta un segmento a la vez — no aplica la nota de "segmentos comparados"
   const batchFootEl = document.getElementById('rop-footnote');
   if (batchFootEl) { batchFootEl.textContent = ''; batchFootEl.style.display = 'none'; }
@@ -11889,10 +12093,10 @@ async function ropBatchRenderOne(filterSpec) {
   // dejar esa lámina en blanco. Igual que ropCaptureFrame(): se captura el marco
   // TAL CUAL se ve en pantalla (nunca se le fuerza un ancho distinto — eso
   // rompía los gráficos de Chart.js, ya dibujados a su tamaño anterior) y recién
-  // después se reescala el resultado a 1280×720 con un canvas intermedio.
+  // después se reescala el resultado a ROP_EXPORT_W×H (4K) con un canvas intermedio.
   const frame = document.getElementById('rop-export-frame');
   const frameRect = frame.getBoundingClientRect();
-  const captureScale = Math.max(2, 1280 / frameRect.width, 720 / frameRect.height);
+  const captureScale = Math.max(2, ROP_EXPORT_W / frameRect.width, ROP_EXPORT_H / frameRect.height);
   let canvas = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     canvas = await html2canvas(frame, { backgroundColor: null, scale: captureScale, useCORS: true });
@@ -11900,9 +12104,9 @@ async function ropBatchRenderOne(filterSpec) {
     await new Promise(r => setTimeout(r, 500 + attempt * 300));
   }
   const target = document.createElement('canvas');
-  target.width = 1280;
-  target.height = 720;
-  target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 1280, 720);
+  target.width = ROP_EXPORT_W;
+  target.height = ROP_EXPORT_H;
+  target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, ROP_EXPORT_W, ROP_EXPORT_H);
   return target.toDataURL('image/png');
 }
 

@@ -11953,7 +11953,15 @@ function ropRenderEng(filterSets, showOrg) {
       scales:{
         y:{ min:0, max:6, ticks:{stepSize:1,font:axisFont,color:axisColor}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor} }
+        // maxRotation/minRotation:0 — sin esto, Chart.js rota las etiquetas
+        // apenas el ancho disponible se achica (rotación automática activada
+        // por defecto), rompiendo el diseño de 2 líneas horizontales que ya
+        // arma `labels` (medición + "N=X" como líneas separadas del array).
+        // Pasaba sobre todo al EXPORTAR: el marco se fija a un ancho canónico
+        // (ver ROP_CANONICAL_W) que puede ser más angosto que lo que se ve en
+        // pantalla en ese momento, así que se veía bien en vivo pero rotado/
+        // encimado en el PNG/PPT descargado.
+        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor,maxRotation:0,minRotation:0,autoSkip:false} }
       }
     }
   });
@@ -11998,7 +12006,8 @@ function ropRenderAgot(filterSets, showOrg) {
       scales:{
         y:{ min:1, max:4, ticks:{stepSize:1,font:axisFont,color:axisColor}, grid:{color:'rgba(0,0,0,.05)'} },
         y2:{ display:false, position:'right', min:0, max:100 },
-        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor} }
+        // Ver comentario en ropRenderEng — mismo fix de rotación.
+        x:{ grid:{display:false}, ticks:{font:axisFont,color:axisColor,maxRotation:0,minRotation:0,autoSkip:false} }
       }
     }
   });

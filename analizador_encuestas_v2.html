@@ -12142,12 +12142,18 @@ function ropRenderRD(filterSets) {
   filterSets = filterSets.slice(0, 2);
   const dimIds = [...ROP_RECURSOS, ...ROP_DEMANDAS];
   const dims = dimIds.map(id => MAESTRO.find(d => d.id === id)).filter(Boolean);
-  // En diagonal el nombre entero va en una sola línea rotada (igual que
-  // antes del fix de superposición, pero ahora sin combinar con el wrap en
-  // varias líneas, que era justo lo que causaba el choque entre palancas
-  // vecinas); en horizontal se sigue partiendo en varias líneas sin rotar.
+  // Diagonal combina wrap + rotación (compacto, 2 líneas, como se veía
+  // antes de todos estos fixes) MIENTRAS el tamaño de letra se mantenga
+  // moderado — a partir de ~140% las líneas se acercan lo suficiente como
+  // para tocarse entre palancas vecinas (verificado visualmente: 130% ok,
+  // 150% ya casi se tocan). Pasado ese umbral se deja de partir en líneas
+  // (nombre completo en una sola línea rotada, más "estirado" pero sin
+  // riesgo de choque) — exactamente la idea que propuso el usuario: compacto
+  // a tamaño normal, se estira solo si hace falta más letra.
   const isDiagonal = ROP.rdOrientation === 'diagonal';
-  const labels = dims.map(d => isDiagonal ? d.nombre : ropWrapLines(d.nombre, 12));
+  const rdAxisScale = (ROP.fonts && ROP.fonts.rdAxis) ? ROP.fonts.rdAxis.size : 1;
+  const diagonalNeedsStretch = isDiagonal && rdAxisScale > 1.3;
+  const labels = dims.map(d => diagonalNeedsStretch ? d.nombre : ropWrapLines(d.nombre, 12));
   // Per-dimension colors — order must match ROP_RECURSOS + ROP_DEMANDAS (= RD_ORDER of main chart)
   // ROP_RECURSOS: oportunidades, coaching, retroalimentacion, colaboracion, autonomia, optimismo, autoeficacia
   // ROP_DEMANDAS: presion, cognitivas, emocionales, conflictoderol, trabas

@@ -1361,9 +1361,16 @@ tr:hover td { background: var(--bg); }
           <div style="display:flex;gap:.5rem">
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropToggleColorPanel()">🎨 Personalizar colores</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropToggleFontPanel()">🔤 Personalizar textos</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="ropDownloadStyle()">💾 Guardar estilo</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="document.getElementById('rop-style-file').click()">📂 Cargar estilo</button>
+            <input type="file" id="rop-style-file" accept=".json" style="display:none" onchange="ropLoadStyleFile(event)">
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropDownloadPNG()">⬇ Descargar PNG</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="ropBatchToggle()">📦 Exportar lote PPT</button>
           </div>
+        </div>
+
+        <div style="font-size:11px;color:var(--text2);margin:-.5rem 0 .75rem">
+          Los colores y tamaños de texto se recuerdan automáticamente en este navegador. "💾 Guardar estilo" descarga un archivo chico (.json) con el diseño actual para reutilizarlo en otro computador o guardar uno por cliente — "📂 Cargar estilo" lo vuelve a aplicar.
         </div>
 
         <div id="rop-color-panel-body" class="card" style="display:none;margin-bottom:.75rem">
@@ -10372,13 +10379,41 @@ function ropHex2rgba(hex, alpha) {
   return `rgba(${isNaN(r)?0:r},${isNaN(g)?0:g},${isNaN(b)?0:b},${alpha})`;
 }
 
+// ── Persistencia del estilo (colores + tipografía) ──────────────────────────
+// Se guarda automáticamente en localStorage de ESTE navegador cada vez que
+// cambia algo (así no se pierde al recargar la página o volver a entrar), y
+// además se puede exportar/importar como archivo .json — localStorage es
+// por navegador/dispositivo, no sirve para llevarlo a otro computador ni
+// para guardar una biblioteca de estilos por cliente; el archivo sí.
+// "Restablecer" siempre vuelve al default del SISTEMA (no a lo guardado acá
+// — para eso está el archivo exportado como respaldo antes de restablecer).
+const ROP_STYLE_STORAGE_KEY = 'ropOnePageStyle_v1';
+
+function ropSaveStyleToStorage() {
+  try {
+    localStorage.setItem(ROP_STYLE_STORAGE_KEY, JSON.stringify({ colors: ROP.colors, fonts: ROP.fonts }));
+  } catch (e) { /* storage bloqueado/lleno/privado — no es crítico, se sigue trabajando en memoria */ }
+}
+
+function ropLoadStyleFromStorage() {
+  try {
+    const raw = localStorage.getItem(ROP_STYLE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : null;
+  } catch (e) { return null; }
+}
+
 function ropInitColors() {
-  if (!ROP.colors) ROP.colors = { ...ROP_COLOR_PRESETS.default };
+  if (ROP.colors) return;
+  const saved = ropLoadStyleFromStorage();
+  ROP.colors = (saved && saved.colors) ? { ...ROP_COLOR_PRESETS.default, ...saved.colors } : { ...ROP_COLOR_PRESETS.default };
 }
 
 function ropSetColor(key, value) {
   ropInitColors();
   ROP.colors[key] = value;
+  ropSaveStyleToStorage();
   ropRenderColorPanel();
   if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
 }
@@ -10387,6 +10422,7 @@ function ropApplyColorPreset(name) {
   const preset = ROP_COLOR_PRESETS[name];
   if (!preset) return;
   ROP.colors = { ...preset };
+  ropSaveStyleToStorage();
   ropRenderColorPanel();
   if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
 }
@@ -10479,14 +10515,26 @@ const ROP_FONT_DEFAULTS = {
   enpsLegend:     { size:1, bold:false, color:'#333333', label:'eNPS: leyenda (Detractores/Neutros/Promotores)' },
 };
 
+function ropFontsFromDefaults() {
+  const fonts = {};
+  Object.keys(ROP_FONT_DEFAULTS).forEach(k => {
+    const d = ROP_FONT_DEFAULTS[k];
+    fonts[k] = { size: d.size, bold: d.bold, color: d.color };
+  });
+  return fonts;
+}
+
 function ropInitFonts() {
-  if (!ROP.fonts) {
-    ROP.fonts = {};
-    Object.keys(ROP_FONT_DEFAULTS).forEach(k => {
-      const d = ROP_FONT_DEFAULTS[k];
-      ROP.fonts[k] = { size: d.size, bold: d.bold, color: d.color };
+  if (ROP.fonts) return;
+  const saved = ropLoadStyleFromStorage();
+  const defaults = ropFontsFromDefaults();
+  if (saved && saved.fonts) {
+    Object.keys(defaults).forEach(k => {
+      const sv = saved.fonts[k];
+      if (sv) defaults[k] = { size: sv.size ?? defaults[k].size, bold: !!sv.bold, color: sv.color ?? defaults[k].color };
     });
   }
+  ROP.fonts = defaults;
 }
 // Tamaño final en px a partir del tamaño base original (lo que ya tenía
 // hardcodeado ese texto) multiplicado por el factor elegido para ese rol.
@@ -10521,13 +10569,18 @@ function ropSetFont(role, field, value) {
   if (field === 'size') ROP.fonts[role].size = parseFloat(value) || 1;
   else if (field === 'bold') ROP.fonts[role].bold = !!value;
   else if (field === 'color') ROP.fonts[role].color = value || null;
+  ropSaveStyleToStorage();
   ropRenderFontPanel();
   if (document.getElementById('rop-preview').style.display !== 'none') { ropApplyStaticFonts(); ropGenerate(true); }
 }
 
+// Restablecer vuelve SIEMPRE al default del sistema (ROP_FONT_DEFAULTS), no
+// a lo que estuviera guardado en el navegador — por eso arma los fonts
+// directo desde ropFontsFromDefaults() en vez de pasar por ropInitFonts()
+// (que leería el storage y devolvería lo mismo que se quiere descartar).
 function ropResetFonts() {
-  ROP.fonts = null;
-  ropInitFonts();
+  ROP.fonts = ropFontsFromDefaults();
+  ropSaveStyleToStorage();
   ropRenderFontPanel();
   if (document.getElementById('rop-preview').style.display !== 'none') { ropApplyStaticFonts(); ropGenerate(true); }
 }
@@ -10606,6 +10659,61 @@ function ropToggleFontPanel() {
   const open = body.style.display !== 'none';
   body.style.display = open ? 'none' : 'block';
   if (!open) ropRenderFontPanel();
+}
+
+// ── Guardar/cargar el estilo (colores + tipografía) como archivo ───────────
+// Complementa el guardado automático en localStorage: un archivo portátil
+// que se puede llevar a otro computador, mandar por mail al resto del
+// equipo, o guardar como "estilo_<cliente>.json" para tener una biblioteca
+// de estilos reutilizables — localStorage por sí solo queda atado a este
+// navegador/dispositivo.
+function ropDownloadStyle() {
+  ropInitColors();
+  ropInitFonts();
+  const data = { _tipo: 'analizador_encuestas_onepage_estilo', _version: 1, colors: ROP.colors, fonts: ROP.fonts };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'estilo_onepage_' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function ropLoadStyleFile(e) {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data || typeof data !== 'object' || (!data.colors && !data.fonts)) {
+        throw new Error('El archivo no tiene el formato esperado (¿es un .json exportado desde "Guardar estilo"?).');
+      }
+      ropInitColors();
+      ropInitFonts();
+      if (data.colors) ROP.colors = { ...ROP_COLOR_PRESETS.default, ...data.colors };
+      if (data.fonts) {
+        const defaults = ropFontsFromDefaults();
+        Object.keys(defaults).forEach(k => {
+          const loaded = data.fonts[k];
+          ROP.fonts[k] = loaded
+            ? { size: loaded.size ?? defaults[k].size, bold: !!loaded.bold, color: loaded.color ?? defaults[k].color }
+            : defaults[k];
+        });
+      }
+      ropSaveStyleToStorage();
+      ropRenderColorPanel();
+      ropRenderFontPanel();
+      ropApplyStaticFonts();
+      if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
+    } catch (err) {
+      alert('No se pudo cargar el archivo de estilo.\n\n' + err.message);
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(f);
 }
 
 function ropDrop(e) {

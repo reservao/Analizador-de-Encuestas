@@ -11139,14 +11139,18 @@ function ropCalcEng(rows) {
   if (avg === null) return {avg:null, pct:null};
 
   // % Alto Engagement: usa col binaria ALTO_ENGAGEMENT si existe (NUNCA VIGOR_BINARY,
-  // que solo mide vigor y sobreestima). Si no existe, calcula per-persona:
-  // Vigor, Dedicación y Absorción promedian >= 5 simultáneamente.
+  // que solo mide vigor y sobreestima). Si no existe —o existe pero no trae valor
+  // para estas filas (típico de una medición "en curso": el binario lo calcula la
+  // plataforma recién al cerrar la medición, y hasta entonces esa columna viene
+  // vacía justo para esas filas aunque sí tenga datos en mediciones anteriores)—
+  // calcula per-persona: Vigor, Dedicación y Absorción promedian >= 5 simultáneamente.
   let pct = null;
   const binIdx = ROP.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(norm(h).replace(/[_\s]/g,'')));
   if (binIdx >= 0) {
     const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
-  } else {
+  }
+  if (pct === null) {
     const subGroups = [['WE1','WE2','WE5'], ['WE3','WE4','WE7'], ['WE6','WE8','WE9']];
     const subCols = subGroups.map(g => g.map(q => ropItemTextCol(q)).filter(Boolean));
     if (subCols.every(g => g.length) && rows.length) {
@@ -11184,8 +11188,13 @@ function ropCalcAgot(rows) {
   }
   if (avg === null) return {avg:null, pct:null};
 
-  // % Alto Agotamiento: prioriza col binaria EXHAUSTED_BYNARY si existe;
-  // si no, ALTO_AGOTAMIENTO/variantes; si no, calcula per-persona: avg(EX1-EX4) >= 3.25
+  // % Alto Agotamiento: prioriza col binaria EXHAUSTED_BYNARY si existe; si no,
+  // ALTO_AGOTAMIENTO/variantes. Si ninguna trae valor para estas filas —típico
+  // de una medición "en curso": el binario lo calcula la plataforma recién al
+  // cerrar la medición, y hasta entonces esa columna viene vacía justo para esas
+  // filas aunque sí tenga datos en mediciones anteriores, lo que antes dejaba el
+  // % de Alto Agotamiento sin mostrarse en el One Page para la medición vigente—
+  // calcula per-persona: avg(EX1-EX4) >= 3.25.
   let pct = null;
   const exhaustedIdx = ROP.headers.findIndex(h => /^(exhausted_?b[iy]nary|high_?exhaustion)$/i.test(norm(h).replace(/[_\s]/g,'')));
   const altoAgotIdx  = ROP.headers.findIndex(h => /^(alto_?agot(amiento)?|agotamiento_?binary|high_?agotamiento)$/i.test(norm(h).replace(/[_\s]/g,'')));
@@ -11193,7 +11202,8 @@ function ropCalcAgot(rows) {
   if (binIdx >= 0) {
     const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
-  } else if (qCols.length && rows.length) {
+  }
+  if (pct === null && qCols.length && rows.length) {
     const vals = rows.map(r => {
       const vs = qCols.map(c => parseFloat(r[ROP.headers.indexOf(c)])).filter(v => !isNaN(v));
       return vs.length ? vs.reduce((a,b)=>a+b,0)/vs.length : null;

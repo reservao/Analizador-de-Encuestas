@@ -10513,6 +10513,28 @@ function ropHex2rgba(hex, alpha) {
   return `rgba(${isNaN(r)?0:r},${isNaN(g)?0:g},${isNaN(b)?0:b},${alpha})`;
 }
 
+// Parte un texto en TANTAS líneas como haga falta (no solo 2) para que entre
+// en el ancho de una barra sin rotar — usado por Engagement/Agotamiento
+// (nombre de medición) y Recursos y Demandas (nombre de palanca). Antes
+// Engagement/Agotamiento solo tenía [medición, "N=X"] como 2 líneas fijas:
+// si el texto de la medición en sí ya no entraba en una sola línea, Chart.js
+// rotaba (hasta que se forzó maxRotation:0) o, sin rotación, las etiquetas de
+// barras contiguas se encimaban entre sí — reportado dos veces con capturas.
+// Devuelve SIEMPRE un arreglo (de 1 o más líneas).
+function ropWrapLines(text, maxCharsPerLine) {
+  const words = String(text == null ? '' : text).split(/\s+/).filter(Boolean);
+  if (!words.length) return [''];
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? cur + ' ' + w : w;
+    if (next.length > maxCharsPerLine && cur) { lines.push(cur); cur = w; }
+    else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
 // ── Persistencia del estilo (colores + tipografía) ──────────────────────────
 // Se guarda automáticamente en localStorage de ESTE navegador cada vez que
 // cambia algo (así no se pierde al recargar la página o volver a entrar), y
@@ -11917,7 +11939,15 @@ function ropRenderEng(filterSets, showOrg) {
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaEng = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
-  const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
+  // Cuantas más mediciones se comparan, menos ancho le toca a cada barra —
+  // se achica el máximo de caracteres por línea para que el texto de la
+  // medición siempre entre sin encimarse con la barra de al lado, partiendo
+  // en más líneas en vez de rotar (ver ropWrapLines).
+  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 16 : 12;
+  const labels = filterSets.map(fs => [
+    ...ropWrapLines(fs.chartLabel || fs.titleLabel || fs.label || '', engAgotMaxChars),
+    `N=${fs.rows.length}`
+  ]);
   const engVals = filterSets.map(fs => ropCalcEng(fs.rows));
   const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
   const axisColor = ropFontColor('engAgotAxis', '#333');
@@ -11981,7 +12011,15 @@ function ropRenderAgot(filterSets, showOrg) {
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaAgot = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
-  const labels = filterSets.map(fs => [(fs.chartLabel || fs.titleLabel || fs.label), `N=${fs.rows.length}`].filter(Boolean));
+  // Cuantas más mediciones se comparan, menos ancho le toca a cada barra —
+  // se achica el máximo de caracteres por línea para que el texto de la
+  // medición siempre entre sin encimarse con la barra de al lado, partiendo
+  // en más líneas en vez de rotar (ver ropWrapLines).
+  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 16 : 12;
+  const labels = filterSets.map(fs => [
+    ...ropWrapLines(fs.chartLabel || fs.titleLabel || fs.label || '', engAgotMaxChars),
+    `N=${fs.rows.length}`
+  ]);
   const agotVals = filterSets.map(fs => ropCalcAgot(fs.rows));
   const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
   const axisColor = ropFontColor('engAgotAxis', '#333');
@@ -12059,20 +12097,7 @@ function ropRenderRD(filterSets) {
   filterSets = filterSets.slice(0, 2);
   const dimIds = [...ROP_RECURSOS, ...ROP_DEMANDAS];
   const dims = dimIds.map(id => MAESTRO.find(d => d.id === id)).filter(Boolean);
-  const wrapLabel = (nombre, max = 12) => {
-    const words = nombre.split(' ');
-    if (words.length === 1) return nombre;
-    const lines = [];
-    let cur = '';
-    for (const w of words) {
-      const next = cur ? cur + ' ' + w : w;
-      if (next.length > max && cur) { lines.push(cur); cur = w; }
-      else cur = next;
-    }
-    if (cur) lines.push(cur);
-    return lines.length > 1 ? lines : nombre;
-  };
-  const labels = dims.map(d => wrapLabel(d.nombre));
+  const labels = dims.map(d => ropWrapLines(d.nombre, 12));
   // Per-dimension colors — order must match ROP_RECURSOS + ROP_DEMANDAS (= RD_ORDER of main chart)
   // ROP_RECURSOS: oportunidades, coaching, retroalimentacion, colaboracion, autonomia, optimismo, autoeficacia
   // ROP_DEMANDAS: presion, cognitivas, emocionales, conflictoderol, trabas
@@ -12168,7 +12193,13 @@ function ropRenderRD(filterSets) {
       },
       scales:{
         y:{ min:1, max:5, ticks:{stepSize:1,font:rdAxisFont,color:rdAxisColor}, grid:{color:'rgba(0,0,0,.05)'} },
-        x:{ grid:{display:false}, ticks:{font:rdAxisFontX, color:rdAxisColor, maxRotation:40, minRotation:20, autoSkip:false} }
+        // Antes rotaba 20-40° combinado con el wrap en varias líneas — esa
+        // combinación (array de líneas + rotación) hacía que Chart.js calculara
+        // mal el espacio de cada etiqueta y las palancas vecinas se encimaran
+        // (reportado con capturas: "Coaching del líder" sobre "Oportunidades de
+        // desarrollo"). Mismo fix que Engagement/Agotamiento: siempre horizontal,
+        // confiando en ropWrapLines para partir en líneas en vez de rotar.
+        x:{ grid:{display:false}, ticks:{font:rdAxisFontX, color:rdAxisColor, maxRotation:0, minRotation:0, autoSkip:false} }
       }
     }
   });

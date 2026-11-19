@@ -2395,7 +2395,7 @@ function togEmptyDetail(elId, btn) {
 
 function process(wb, filename) {
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  const json = sheetToJsonSafe(ws, { header: 1, defval: '' });
   G.headers = json[0].map(String);
   G.rows = json.slice(1).filter(r => r.some(c => c !== ''));
   G.filename = filename;
@@ -2568,11 +2568,11 @@ function processCargaWb(wb, fname) {
   let bestSheet = wb.SheetNames[0], bestCols = 0;
   for (const sn of wb.SheetNames) {
     const ws = wb.Sheets[sn];
-    const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+    const json = sheetToJsonSafe(ws, { header:1, defval:'' });
     if (json.length && json[0].length > bestCols) { bestCols = json[0].length; bestSheet = sn; }
   }
   const ws = wb.Sheets[bestSheet];
-  const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+  const json = sheetToJsonSafe(ws, { header:1, defval:'' });
   C.headers = json[0].map(String);
   C.rows = json.slice(1).filter(r => r.some(c => c !== ''));
   C.filename = fname;
@@ -3433,7 +3433,7 @@ function s1CleanVal(val) {
 
 function s1Process(wb, filename) {
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+  const json = sheetToJsonSafe(ws, { header:1, defval:'' });
   S1.headers = json[0].map(String);
   const rawRows = json.slice(1).filter(r => r.some(c => c !== ''));
   S1.filename = filename;
@@ -4906,7 +4906,7 @@ function rProcess(wb, filename, sheetName) {
   // Hoja elegida manualmente (selector) o detectada automáticamente (la de más filas)
   const bestSheet = sheetName || pickBestSheet(wb);
   const ws = wb.Sheets[bestSheet];
-  const json = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+  const json = sheetToJsonSafe(ws, { header:1, defval:'' });
   R.headers = json[0].map(String);
   R.rows = json.slice(1).filter(r => r.some(c => c !== ''));
   R.filename = filename;
@@ -5203,7 +5203,7 @@ function rcGetVal(rows, varDef) {
 function rcProcess(wb, filename, sheetName) {
   const bestSheet = sheetName || pickBestSheet(wb);
   const ws = wb.Sheets[bestSheet];
-  const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+  const json = sheetToJsonSafe(ws, {header:1, defval:''});
   if (!json || !json.length || !json[0] || !json[0].length) {
     alert('El archivo está vacío o no tiene columnas. Verifica que sea un archivo Excel válido.');
     return;
@@ -6215,7 +6215,7 @@ function rcpCuadrante4Seg(rows) {
 function rcpProcess(wb, filename, sheetName) {
   const bestSheet = sheetName || pickBestSheet(wb);
   const ws=wb.Sheets[bestSheet];
-  const json=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+  const json=sheetToJsonSafe(ws,{header:1,defval:''});
   if (!json || !json.length || !json[0] || !json[0].length) {
     alert('El archivo está vacío o no tiene columnas. Verifica que sea un archivo Excel válido.');
     return;
@@ -7274,11 +7274,52 @@ function rcpHealthCheckDim(dim, headers, rows, overrides) {
 // "Columnas detectadas": se muestra un selector con la hoja detectada ya
 // elegida, y cambiarla reprocesa al instante sobre el mismo archivo en
 // memoria, sin tener que volver a subirlo.
+// Recorta el rango real de una hoja antes de convertirla a JSON. Reportado
+// con una base real ("RESULTADOS_TODO_SOCIEDAD_2026"): los datos terminaban
+// en la fila ~3829, pero la hoja declaraba un rango "usado" hasta la fila
+// 1.048.576 (el máximo absoluto de Excel) — típico de columnas con formato/
+// bordes aplicados a la columna completa en algún momento, sin que eso
+// implique datos reales ahí. XLSX.utils.sheet_to_json confía ciegamente en
+// ese rango declarado (ws['!ref']) y convierte CADA fila dentro de él, exista
+// o no: para ese archivo, sheet_to_json solo tardaba 115 SEGUNDOS (XLSX.read
+// en sí, que si procesa bien el XML real, tardaba apenas 2s) — eso era "la
+// página se queda pegada, no responde" reportado dos veces seguidas.
+// ws es un objeto disperso: solo existen claves para celdas con contenido
+// real (A1, B2, etc., más las claves de metadatos que arrancan con '!'), así
+// que recalcular el rango real recorriendo esas claves es barato incluso en
+// archivos grandes de verdad — a diferencia de confiar en '!ref'.
+function sheetUsedRange(ws) {
+  let maxR = -1, maxC = -1;
+  for (const addr in ws) {
+    if (addr.charCodeAt(0) === 33) continue; // '!' — ej. !ref, !cols, !merges
+    const m = /^([A-Z]+)(\d+)$/.exec(addr);
+    if (!m) continue;
+    const r = parseInt(m[2], 10) - 1;
+    if (r > maxR) maxR = r;
+    const c = XLSX.utils.decode_col(m[1]);
+    if (c > maxC) maxC = c;
+  }
+  return maxR >= 0 ? { s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } } : null;
+}
+function sheetToJsonSafe(ws, opts) {
+  const range = sheetUsedRange(ws);
+  return XLSX.utils.sheet_to_json(ws, range ? { ...opts, range } : opts);
+}
+// Cuenta filas sin construir el JSON completo — usado donde solo hace falta
+// el número (elegir la hoja con más filas, mostrarlo en el selector).
+function sheetRowCount(ws) {
+  const range = sheetUsedRange(ws);
+  return range ? range.e.r + 1 : 0;
+}
+
 function pickBestSheet(wb) {
   let best = wb.SheetNames[0], bestRows = 0;
   for (const sn of wb.SheetNames) {
-    const json = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
-    if (json.length > bestRows) { bestRows = json.length; best = sn; }
+    // sheetRowCount() en vez de convertir toda la hoja a JSON solo para contar
+    // filas — mismo motivo que sheetToJsonSafe (ver su comentario): barato
+    // incluso si la hoja declara un rango inflado.
+    const rows = sheetRowCount(wb.Sheets[sn]);
+    if (rows > bestRows) { bestRows = rows; best = sn; }
   }
   return best;
 }
@@ -7301,7 +7342,7 @@ function renderSheetPicker(moduleTag) {
   const container = document.getElementById(reg.containerId);
   if (!container) return;
   if (!reg.wb || reg.wb.SheetNames.length <= 1) { container.innerHTML = ''; container.style.display = 'none'; return; }
-  const rowCounts = reg.wb.SheetNames.map(sn => XLSX.utils.sheet_to_json(reg.wb.Sheets[sn], { header: 1, defval: '' }).length);
+  const rowCounts = reg.wb.SheetNames.map(sn => sheetRowCount(reg.wb.Sheets[sn]));
   container.style.display = '';
   container.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:.75rem;font-size:12px;flex-wrap:wrap">
     <span style="color:var(--text2)">Hoja del archivo (${reg.wb.SheetNames.length} encontradas):</span>
@@ -10823,7 +10864,7 @@ function ropProcess(file, sheetName) {
     const wb = XLSX.read(ev.target.result, {type:'binary'});
     const chosenSheet = sheetName || pickBestSheet(wb);
     const ws = wb.Sheets[chosenSheet];
-    const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    const data = sheetToJsonSafe(ws, {header:1, defval:''});
     if (!data.length) return;
     ROP.headers = data[0].map(String);
     ROP.rows = data.slice(1).filter(r => r.some(c => String(c).trim() !== ''));

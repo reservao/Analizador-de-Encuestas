@@ -4974,9 +4974,16 @@ function rProcess(wb, filename, sheetName) {
     const nonEmpty = R.rows.filter(r => String(r[idx]||'').trim() !== '');
     if (nonEmpty.length < 5) return;
 
-    // Check unique values count — must be categorical (2-80 unique)
+    // Check unique values count — must be categorical (2-200 unique). Antes
+    // el tope era 80: en una base real (Coanil) "CLASIFICACION4HOMOLOGADA2026"
+    // (centros/sedes) tenía 87 valores distintos y quedaba totalmente afuera
+    // — ni seleccionable, sin aviso — por una categorización legítima
+    // simplemente más granular que el tope viejo. 200 sigue descartando
+    // columnas de texto libre/ID (identificador de esa misma base: 1445
+    // valores distintos), pero da margen real a clasificaciones de muchas
+    // sedes/cargos/centros. Mismo tope subido en RCP/RC/ROP — ver ahí.
     const uniq = new Set(nonEmpty.map(r => String(r[idx]||'').trim()));
-    const isCateg = uniq.size >= 2 && uniq.size <= 80;
+    const isCateg = uniq.size >= 2 && uniq.size <= 200;
 
     // Check has text values (not pure numbers)
     const hasText = [...uniq].some(v => isNaN(parseFloat(v)));
@@ -5255,7 +5262,7 @@ function rcProcess(wb, filename, sheetName) {
   segSel.innerHTML = '<option value="">— Sin segmentación (total general) —</option>';
   RC.headers.forEach((h, idx) => {
     const uniq = new Set(RC.rows.map(r=>String(r[idx]||'').trim()).filter(Boolean));
-    if (uniq.size >= 2 && uniq.size <= 30 && !['MEDICION','Empresa'].includes(h)) {
+    if (uniq.size >= 2 && uniq.size <= 200 && !['MEDICION','Empresa'].includes(h)) {
       const opt = document.createElement('option');
       opt.value = h; opt.textContent = h + ' (' + uniq.size + ' grupos)';
       segSel.appendChild(opt);
@@ -6268,7 +6275,7 @@ function renderRcpParams() {
     if (RCP.medCol !== '__single__' && h === RCP.medCol) return false;
     if (!h || h.length > 72) return false;
     const uniq=new Set(RCP.rows.map(r=>String(r[idx]||'').trim()).filter(Boolean));
-    if (uniq.size<2 || uniq.size>40) return false;
+    if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !/^(WE|EX|SE|wp|cogn|soc|emo|feedb|rolcon|hassle|coach|oppor|auto|optim)\d+$/i.test(h) &&
       !/^(WORK|EXHAUST|SELF|OPTIM|VIGOR|ABSORT|DEDIC|SOCIAL|EMOTION|FEED|ROLE|HASS|COACH|OPPORT|AUTONOMY|COGNITIVE|ENGAGEMENT_|EXHAUSTED|INTENT|RIESGO|TOTAL|CRIT|AON|eNPS|ALTO|OPTAGO|OPTENG|RUT|ID_|NOMBRE|EMAIL|FECHA)/i.test(h) &&
@@ -6537,7 +6544,7 @@ function rcpAddBenchLine() {
   const segCols = RCP.headers.filter((h,cidx)=>{
     if (!h || h.length > 72) return false;
     const uniq=new Set(RCP.rows.map(r=>String(r[cidx]||'').trim()).filter(Boolean));
-    if (uniq.size<2 || uniq.size>40) return false;
+    if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !['MEDICION','Empresa','Sector'].includes(h) &&
       !/^(WE|EX|SE|wp|cogn|soc|emo|feedb|rolcon|hassle|coach|oppor|auto|optim)\d+$/i.test(h) &&
@@ -6986,7 +6993,7 @@ function rcpAddRdLine() {
   const claCols = RCP.headers.filter((h,ci)=>{
     if (!h || h.length > 72) return false;
     const uniq=new Set(RCP.rows.map(r=>String(r[ci]||'').trim()).filter(Boolean));
-    if (uniq.size<2 || uniq.size>40) return false;
+    if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !['MEDICION','Empresa','Sector'].includes(h) &&
       !/^(WE|EX|SE|wp|cogn|soc|emo|feedb|rolcon|hassle|coach|oppor|auto|optim)\d+$/i.test(h) &&
@@ -10788,8 +10795,10 @@ function ropBuildFilters() {
     if (dimNameSet.has(norm(h))) return false;
     // Códigos cortos tipo "D1"/"D2" de dimensiones extendidas no estándar
     if (/^d\d+$/i.test(h)) return false;
+    // Tope subido de 80 a 200 — ver comentario en R (rProcess, mismo criterio)
+    // sobre clasificaciones reales con más de 80 valores distintos.
     const vals = [...new Set(ROP.rows.map(r => String(r[ROP.headers.indexOf(h)]).trim()).filter(Boolean))];
-    return vals.length >= 2 && vals.length <= 80;
+    return vals.length >= 2 && vals.length <= 200;
   });
 
   ROP.filters = [{ medicion: ROP.mediciones[0] || '', clasificaciones: [{ clascol: '', segmento: '' }] }];

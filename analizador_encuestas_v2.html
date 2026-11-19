@@ -11942,14 +11942,19 @@ function ropRenderEng(filterSets, showOrg) {
   // Cuantas más mediciones se comparan, menos ancho le toca a cada barra —
   // se achica el máximo de caracteres por línea para que el texto de la
   // medición siempre entre sin encimarse con la barra de al lado, partiendo
-  // en más líneas en vez de rotar (ver ropWrapLines).
-  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 16 : 12;
+  // en más líneas en vez de rotar (ver ropWrapLines). El canvas tiene una
+  // altura FIJA (30% del marco) — más líneas de etiqueta le quitan alto a
+  // las barras mismas (reportado: "se ve más chato"), así que también se
+  // achica un poco el tamaño de letra del eje cuando hacen falta más líneas,
+  // para recuperar parte de esa altura sin volver a encimar texto.
+  const engAgotAxisBase = filterSets.length <= 2 ? 11 : filterSets.length === 3 ? 10 : 9;
+  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 18 : 15;
   const labels = filterSets.map(fs => [
     ...ropWrapLines(fs.chartLabel || fs.titleLabel || fs.label || '', engAgotMaxChars),
     `N=${fs.rows.length}`
   ]);
   const engVals = filterSets.map(fs => ropCalcEng(fs.rows));
-  const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
+  const axisFont = { size: ropFontSize('engAgotAxis', engAgotAxisBase), weight: ropFontWeightStr('engAgotAxis', false) };
   const axisColor = ropFontColor('engAgotAxis', '#333');
 
   ROP.charts.eng = new Chart(document.getElementById('rop-chart-eng'), {
@@ -12011,17 +12016,17 @@ function ropRenderAgot(filterSets, showOrg) {
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaAgot = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
-  // Cuantas más mediciones se comparan, menos ancho le toca a cada barra —
-  // se achica el máximo de caracteres por línea para que el texto de la
-  // medición siempre entre sin encimarse con la barra de al lado, partiendo
-  // en más líneas en vez de rotar (ver ropWrapLines).
-  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 16 : 12;
+  // Ver comentario en ropRenderEng: se achican letra y el máximo de
+  // caracteres por línea cuando hay más mediciones comparadas, para no
+  // perder tanta altura de barra como antes ("se ve más chato").
+  const engAgotAxisBase = filterSets.length <= 2 ? 11 : filterSets.length === 3 ? 10 : 9;
+  const engAgotMaxChars = filterSets.length <= 2 ? 22 : filterSets.length === 3 ? 18 : 15;
   const labels = filterSets.map(fs => [
     ...ropWrapLines(fs.chartLabel || fs.titleLabel || fs.label || '', engAgotMaxChars),
     `N=${fs.rows.length}`
   ]);
   const agotVals = filterSets.map(fs => ropCalcAgot(fs.rows));
-  const axisFont = { size: ropFontSize('engAgotAxis', 11), weight: ropFontWeightStr('engAgotAxis', false) };
+  const axisFont = { size: ropFontSize('engAgotAxis', engAgotAxisBase), weight: ropFontWeightStr('engAgotAxis', false) };
   const axisColor = ropFontColor('engAgotAxis', '#333');
 
   ROP.charts.agot = new Chart(document.getElementById('rop-chart-agot'), {

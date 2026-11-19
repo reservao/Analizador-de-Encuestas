@@ -11093,6 +11093,31 @@ function ropFindEnpsCol(rows) {
   return detectEnpsCol(ROP.headers, rows || ROP.rows);
 }
 
+// Columnas binarias pre-calculadas "Alto Engagement"/"Alto Agotamiento" —
+// igual que eNPS, se detectan por nombre de columna (no por código de ítem
+// como el resto de MAESTRO), así que vivían sin ninguna forma de verlas ni
+// corregirlas en el panel "Columnas detectadas" pese a que ropCalcEng/
+// ropCalcAgot SÍ las usan cuando existen. Devuelve el ÍNDICE (no el nombre)
+// para que ropCalcEng/ropCalcAgot puedan seguir usándolo directo como antes.
+function ropFindAltoEngCol() {
+  const key = 'FLAG:altoEng';
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, key)) {
+    const v = ROP.colOverrides[key];
+    return v ? ROP.headers.indexOf(v) : -1;
+  }
+  return ROP.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(norm(h).replace(/[_\s]/g,'')));
+}
+function ropFindAltoAgotCol() {
+  const key = 'FLAG:altoAgot';
+  if (ROP.colOverrides && Object.prototype.hasOwnProperty.call(ROP.colOverrides, key)) {
+    const v = ROP.colOverrides[key];
+    return v ? ROP.headers.indexOf(v) : -1;
+  }
+  const exhaustedIdx = ROP.headers.findIndex(h => /^(exhausted_?b[iy]nary|high_?exhaustion)$/i.test(norm(h).replace(/[_\s]/g,'')));
+  if (exhaustedIdx >= 0) return exhaustedIdx;
+  return ROP.headers.findIndex(h => /^(alto_?agot(amiento)?|agotamiento_?binary|high_?agotamiento)$/i.test(norm(h).replace(/[_\s]/g,'')));
+}
+
 function ropCalcDim(dimId, rows) {
   const dim = MAESTRO.find(d => d.id === dimId);
   if (!dim) return null;
@@ -11145,7 +11170,7 @@ function ropCalcEng(rows) {
   // vacía justo para esas filas aunque sí tenga datos en mediciones anteriores)—
   // calcula per-persona: Vigor, Dedicación y Absorción promedian >= 5 simultáneamente.
   let pct = null;
-  const binIdx = ROP.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(norm(h).replace(/[_\s]/g,'')));
+  const binIdx = ropFindAltoEngCol();
   if (binIdx >= 0) {
     const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
@@ -11196,9 +11221,7 @@ function ropCalcAgot(rows) {
   // % de Alto Agotamiento sin mostrarse en el One Page para la medición vigente—
   // calcula per-persona: avg(EX1-EX4) >= 3.25.
   let pct = null;
-  const exhaustedIdx = ROP.headers.findIndex(h => /^(exhausted_?b[iy]nary|high_?exhaustion)$/i.test(norm(h).replace(/[_\s]/g,'')));
-  const altoAgotIdx  = ROP.headers.findIndex(h => /^(alto_?agot(amiento)?|agotamiento_?binary|high_?agotamiento)$/i.test(norm(h).replace(/[_\s]/g,'')));
-  const binIdx = exhaustedIdx >= 0 ? exhaustedIdx : altoAgotIdx;
+  const binIdx = ropFindAltoAgotCol();
   if (binIdx >= 0) {
     const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
     if (vals.length) pct = vals.filter(v => v === 1).length / vals.length * 100;
@@ -11314,24 +11337,38 @@ function ropRenderHealthCheck() {
     </details>`;
   }).join('');
 
-  const enpsIcon = enpsCol ? '✓' : '✗';
-  const enpsColor = enpsCol ? '#2E7D32' : '#B23B2E';
-  const enpsOverrideSel = `
-    <select onchange="ropHealthSetOverride('eNPS', this.value)"
-      style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
-      <option value="">— automático —</option>
-      ${headers.map(h => `<option value="${escHtml(h)}" ${overrides['eNPS'] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
-    </select>`;
-  const enpsRow = `<details style="border-bottom:1px solid var(--border);padding:4px 0">
-    <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
-      <span style="color:${enpsColor};width:14px;flex-shrink:0">${enpsIcon}</span>
-      <span style="flex:0 0 190px">eNPS</span>
-      <span style="flex:1;min-width:140px">${enpsCol ? `<code>${escHtml(enpsCol)}</code>` : `<span style="color:#B23B2E">no encontrada</span>`}</span>
-    </summary>
-    <div style="padding:6px 0 6px 24px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
-      <span>Columna:</span>${enpsOverrideSel}
-    </div>
-  </details>`;
+  // Filas sueltas tipo "flag" (no son dimensiones de MAESTRO): se detectan por
+  // nombre de columna, no por código de ítem, así que necesitan su propia fila
+  // con selector — mismo patrón para eNPS, Alto Engagement y Alto Agotamiento
+  // (antes solo eNPS tenía esto; Alto Engagement/Agotamiento no se podían ver
+  // ni corregir, pese a que ropCalcEng/ropCalcAgot sí las usan cuando existen).
+  const ropFlagRow = (label, overrideKey, colName) => {
+    const icon = colName ? '✓' : '✗';
+    const color = colName ? '#2E7D32' : '#B23B2E';
+    const overrideSel = `
+      <select onchange="ropHealthSetOverride('${escJsAttr(overrideKey)}', this.value)"
+        style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+        <option value="">— automático —</option>
+        ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[overrideKey] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+      </select>`;
+    return `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+        <span style="color:${color};width:14px;flex-shrink:0">${icon}</span>
+        <span style="flex:0 0 190px">${escHtml(label)}</span>
+        <span style="flex:1;min-width:140px">${colName ? `<code>${escHtml(colName)}</code>` : `<span style="color:#B23B2E">no encontrada — se calcula desde los ítems</span>`}</span>
+      </summary>
+      <div style="padding:6px 0 6px 24px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+        <span>Columna:</span>${overrideSel}
+      </div>
+    </details>`;
+  };
+
+  const altoEngIdx = ropFindAltoEngCol();
+  const altoAgotIdx = ropFindAltoAgotCol();
+  const flagRowsHtml =
+    ropFlagRow('eNPS', 'eNPS', enpsCol) +
+    ropFlagRow('Alto Engagement (columna binaria)', 'FLAG:altoEng', altoEngIdx >= 0 ? headers[altoEngIdx] : null) +
+    ropFlagRow('Alto Agotamiento (columna binaria)', 'FLAG:altoAgot', altoAgotIdx >= 0 ? headers[altoAgotIdx] : null);
 
   container.style.display = '';
   container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
@@ -11340,7 +11377,10 @@ function ropRenderHealthCheck() {
     </div>
     <details style="margin-top:8px">
       <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las ${total} dimensiones (y corregir si hace falta)</summary>
-      <div style="margin-top:8px">${rowsHtml}${enpsRow}</div>
+      <div style="margin-top:8px">${rowsHtml}${flagRowsHtml}</div>
+      <div style="margin-top:6px;font-size:10px;color:var(--text2)">
+        "Alto Engagement"/"Alto Agotamiento" solo se usan si existen — si no se encuentra una columna, el % se calcula igual desde los ítems individuales (Vigor/Dedicación/Absorción y EX1-EX4 respectivamente).
+      </div>
     </details>
   </div>`;
 }

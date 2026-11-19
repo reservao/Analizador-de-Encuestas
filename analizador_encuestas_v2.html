@@ -4348,6 +4348,27 @@ function escJsAttr(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Arma el set de valores únicos (no vacíos) de una columna, pero corta la
+// cuenta apenas supera `cap` — usado en R/RCP/RC/ROP para decidir qué
+// columnas mostrar como clasificación/segmento. Antes se construía un Set
+// COMPLETO recorriendo TODAS las filas por cada columna candidata, incluso
+// para columnas tipo ID/texto libre con miles de valores distintos que de
+// todos modos se iban a descartar por superar el tope — en una base grande
+// (muchas filas × muchas columnas candidatas) eso se sentía como que la
+// página se quedaba pegada al cargar. Cortar apenas se supera el tope deja
+// el mismo resultado (categórica sí/no) sin pagar el costo completo en las
+// columnas que igual no califican.
+function uniqueValsCapped(rows, idx, cap) {
+  const seen = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    const v = String(rows[i][idx] ?? '').trim();
+    if (!v) continue;
+    seen.add(v);
+    if (seen.size > cap) break;
+  }
+  return seen;
+}
+
 // Descarga: reporte Sección 1
 // ─── DESCARGA HTML INTERACTIVO ────────────────────────────────────────────────
 function s1DownloadOrgHtml() {
@@ -4982,7 +5003,10 @@ function rProcess(wb, filename, sheetName) {
     // columnas de texto libre/ID (identificador de esa misma base: 1445
     // valores distintos), pero da margen real a clasificaciones de muchas
     // sedes/cargos/centros. Mismo tope subido en RCP/RC/ROP — ver ahí.
-    const uniq = new Set(nonEmpty.map(r => String(r[idx]||'').trim()));
+    // uniqueValsCapped corta apenas supera el tope, en vez de recorrer TODAS
+    // las filas igual (ver su comentario) — importante acá porque esto corre
+    // una vez POR CADA columna del archivo.
+    const uniq = uniqueValsCapped(R.rows, idx, 200);
     const isCateg = uniq.size >= 2 && uniq.size <= 200;
 
     // Check has text values (not pure numbers)
@@ -5261,7 +5285,7 @@ function rcProcess(wb, filename, sheetName) {
   const segSel = document.getElementById('rc-seg-col');
   segSel.innerHTML = '<option value="">— Sin segmentación (total general) —</option>';
   RC.headers.forEach((h, idx) => {
-    const uniq = new Set(RC.rows.map(r=>String(r[idx]||'').trim()).filter(Boolean));
+    const uniq = uniqueValsCapped(RC.rows, idx, 200);
     if (uniq.size >= 2 && uniq.size <= 200 && !['MEDICION','Empresa'].includes(h)) {
       const opt = document.createElement('option');
       opt.value = h; opt.textContent = h + ' (' + uniq.size + ' grupos)';
@@ -6274,7 +6298,7 @@ function renderRcpParams() {
   const claCols = RCP.headers.filter((h,idx)=>{
     if (RCP.medCol !== '__single__' && h === RCP.medCol) return false;
     if (!h || h.length > 72) return false;
-    const uniq=new Set(RCP.rows.map(r=>String(r[idx]||'').trim()).filter(Boolean));
+    const uniq=uniqueValsCapped(RCP.rows, idx, 200);
     if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !/^(WE|EX|SE|wp|cogn|soc|emo|feedb|rolcon|hassle|coach|oppor|auto|optim)\d+$/i.test(h) &&
@@ -6543,7 +6567,7 @@ function rcpAddBenchLine() {
   // Build segment columns + values
   const segCols = RCP.headers.filter((h,cidx)=>{
     if (!h || h.length > 72) return false;
-    const uniq=new Set(RCP.rows.map(r=>String(r[cidx]||'').trim()).filter(Boolean));
+    const uniq=uniqueValsCapped(RCP.rows, cidx, 200);
     if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !['MEDICION','Empresa','Sector'].includes(h) &&
@@ -6992,7 +7016,7 @@ function rcpAddRdLine() {
 
   const claCols = RCP.headers.filter((h,ci)=>{
     if (!h || h.length > 72) return false;
-    const uniq=new Set(RCP.rows.map(r=>String(r[ci]||'').trim()).filter(Boolean));
+    const uniq=uniqueValsCapped(RCP.rows, ci, 200);
     if (uniq.size<2 || uniq.size>200) return false;
     if ([...uniq].every(v=>v==='0'||v==='1')) return false;
     return !['MEDICION','Empresa','Sector'].includes(h) &&
@@ -10797,8 +10821,12 @@ function ropBuildFilters() {
     if (/^d\d+$/i.test(h)) return false;
     // Tope subido de 80 a 200 — ver comentario en R (rProcess, mismo criterio)
     // sobre clasificaciones reales con más de 80 valores distintos.
-    const vals = [...new Set(ROP.rows.map(r => String(r[ROP.headers.indexOf(h)]).trim()).filter(Boolean))];
-    return vals.length >= 2 && vals.length <= 200;
+    // (de paso: antes ROP.headers.indexOf(h) se recalculaba DENTRO del map,
+    // una vez por cada fila — se saca afuera, y uniqueValsCapped corta apenas
+    // supera el tope en vez de recorrer todas las filas igual.)
+    const hIdx = ROP.headers.indexOf(h);
+    const vals = uniqueValsCapped(ROP.rows, hIdx, 200);
+    return vals.size >= 2 && vals.size <= 200;
   });
 
   ROP.filters = [{ medicion: ROP.mediciones[0] || '', clasificaciones: [{ clascol: '', segmento: '' }] }];

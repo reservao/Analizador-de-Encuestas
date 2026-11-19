@@ -11641,7 +11641,13 @@ function ropRenderEng(filterSets, showOrg) {
       // baja resolución interna, queda borroso al ampliar sin importar cuánto se
       // escale la captura final — acá se fuerza una resolución interna generosa
       // para que la exportación a ROP_EXPORT_W×H (4K) tenga detalle real.
-      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
+      // animation:false: ropCaptureFrame() llama chart.resize() justo antes de
+      // capturar (para fijar el layout a un ancho canónico, ver más abajo), y
+      // eso vuelve a disparar la animación de entrada de las barras — si la
+      // captura ocurre a mitad de esa animación (~1s por defecto), las barras
+      // salen más cortas de lo que deberían en la imagen exportada. Sin
+      // animación, el canvas siempre tiene el valor final apenas se redibuja.
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3, animation:false,
       layout:{ padding:{ top:18 } },
       _valLabels:true,
       plugins:{ legend:{display:false},
@@ -11686,7 +11692,7 @@ function ropRenderAgot(filterSets, showOrg) {
     }]},
     plugins:[ropValLabelPlugin, ropPctBadgePlugin, ropConfidentialPlugin],
     options:{
-      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3, animation:false,
       layout:{ padding:{ top:18 } },
       _valLabels:true,
       plugins:{ legend:{display:false},
@@ -11836,7 +11842,7 @@ function ropRenderRD(filterSets) {
     data:{ labels, datasets },
     plugins:[ropRDValPlugin, ropConfidentialPlugin],
     options:{
-      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3, animation:false,
       layout:{ padding:{ top: 10, bottom: rdNoteCount * 22 + 10 } },
       plugins:{
         legend:{
@@ -11895,7 +11901,7 @@ function ropRenderENPS(filterSets) {
     plugins:[ropEnpsSegLabels, ropEnpsBadgePlugin, ropConfidentialPlugin],
     options:{
       indexAxis:'y',
-      responsive:true, maintainAspectRatio:false, devicePixelRatio:3,
+      responsive:true, maintainAspectRatio:false, devicePixelRatio:3, animation:false,
       layout:{ padding:{ top:22, right:130, bottom:18 } },
       plugins:{
         legend:{
@@ -11932,28 +11938,64 @@ const ROP_EXPORT_W = 3840, ROP_EXPORT_H = 2160;
 // tamaño anterior, y no alcanzaban a redibujarse (el resize de Chart.js es
 // asíncrono, vía ResizeObserver) antes de que html2canvas leyera los
 // píxeles — resultado: gráficos estirados/superpuestos, a veces el marco
-// visible quedaba atascado en ese estado roto.
+// visible quedaba atascado en ese estado roto. Por eso se pasó a capturar
+// "tal cual se ve en pantalla" y reescalar la imagen ya capturada después.
 //
-// Ahora se captura el marco TAL CUAL se ve en pantalla (sin tocar su
-// tamaño) y recién después se reescala la IMAGEN ya capturada al tamaño
-// final con un canvas intermedio — nunca se toca el DOM en vivo, así que no
-// hay forma de que los gráficos queden a medio redibujar.
-function ropCaptureFrame(wrap) {
-  // scale:1 capturaba al tamaño EN PANTALLA del marco (normalmente mucho más chico
-  // que el tamaño final, ej. ~640×360 en una ventana angosta), y ese bitmap de baja
-  // resolución se estiraba después al tamaño final — quedaba borroso/pixelado.
-  // Se calcula un factor de escala para que la captura nativa sea siempre, como
-  // mínimo, ROP_EXPORT_W×ROP_EXPORT_H (y al menos el doble de nítida con el piso
-  // de 2), así el reescalado final del canvas intermedio siempre reduce (nunca agranda).
+// Pero eso trae un problema distinto, reportado después: el marco tiene
+// `width:100%`, así que su ancho real en píxeles depende de la ventana/
+// pantalla de quien exporta — y Chart.js decide cuánto espacio ocupan las
+// etiquetas, si la leyenda se envuelve a dos líneas, el grosor de las
+// barras, etc. en base a ese ancho real. Resultado: la MISMA medición
+// exportada desde una ventana angosta y desde una pantalla ancha podía
+// verse distinta en su composición, no solo en nitidez.
+//
+// Solución correcta (sin repetir el bug original): en vez de depender del
+// ResizeObserver automático (asíncrono), se llama directamente al método
+// público chart.resize() de Chart.js, que SÍ es síncrono — fuerza el
+// redibujado inmediato al tamaño nuevo, sin esperar el debounce del
+// observer. Así se puede fijar el marco a un ancho canónico (1280×720,
+// igual proporción 16:9 que el resto del diseño) justo antes de capturar,
+// esperar un frame de pintura real, capturar, y recién ahí restaurar el
+// ancho responsive — el layout queda siempre calculado sobre el mismo
+// tamaño en píxeles, sin importar la pantalla de quien lo generó.
+const ROP_CANONICAL_W = 1280, ROP_CANONICAL_H = 720;
+
+async function ropCaptureFrame(wrap) {
+  const prevWidth = wrap.style.width;
+  const prevMaxWidth = wrap.style.maxWidth;
+  wrap.style.maxWidth = 'none';
+  wrap.style.width = ROP_CANONICAL_W + 'px';
+  // Cada canvas mide su propia celda del grid (ya redimensionada por el
+  // cambio de ancho del marco) — resize() sin argumentos la lee y redibuja
+  // de inmediato, sin esperar el ResizeObserver automático (asíncrono).
+  Object.values(ROP.charts).forEach(c => { if (c) c.resize(); });
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   const rect = wrap.getBoundingClientRect();
   const scale = Math.max(2, ROP_EXPORT_W / rect.width, ROP_EXPORT_H / rect.height);
-  return html2canvas(wrap, { backgroundColor: null, scale }).then(canvas => {
-    const target = document.createElement('canvas');
+  let target;
+  try {
+    const canvas = await html2canvas(wrap, { backgroundColor: null, scale });
+    target = document.createElement('canvas');
     target.width = ROP_EXPORT_W;
     target.height = ROP_EXPORT_H;
     target.getContext('2d').drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, ROP_EXPORT_W, ROP_EXPORT_H);
-    return target;
-  });
+  } finally {
+    // Restaurar el tamaño responsive de la vista en vivo pase lo que pase,
+    // incluso si html2canvas falla — para no dejar la vista previa atascada
+    // en el ancho canónico (el bug original que esto evita repetir). Se
+    // espera otro frame de pintura antes de devolver el control: Chart.js
+    // también tiene su PROPIO ResizeObserver (además del resize() manual) y
+    // sin esta espera puede quedar una carrera donde el observer dispara
+    // DESPUÉS del resize() manual y sobrescribe el tamaño con uno a medio
+    // camino — la vista previa quedaba con el gráfico más angosto de lo que
+    // correspondía a la ventana real hasta la próxima interacción.
+    wrap.style.width = prevWidth;
+    wrap.style.maxWidth = prevMaxWidth;
+    Object.values(ROP.charts).forEach(c => { if (c) c.resize(); });
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+  return target;
 }
 
 function ropDownloadPNG() {
@@ -12090,18 +12132,32 @@ async function ropBatchRenderOne(filterSpec) {
   // Capturar. En lotes con muchas láminas seguidas, a veces el marco no terminó de
   // "asentarse" (gráficos recién destruidos/recreados) y html2canvas captura un
   // canvas vacío de 0×0 — se reintenta varias veces antes de rendirse, para no
-  // dejar esa lámina en blanco. Igual que ropCaptureFrame(): se captura el marco
-  // TAL CUAL se ve en pantalla (nunca se le fuerza un ancho distinto — eso
-  // rompía los gráficos de Chart.js, ya dibujados a su tamaño anterior) y recién
-  // después se reescala el resultado a ROP_EXPORT_W×H (4K) con un canvas intermedio.
+  // dejar esa lámina en blanco. Igual que ropCaptureFrame(): se fija el marco a
+  // un ancho canónico (ROP_CANONICAL_W) y se fuerza el resize() síncrono de
+  // cada gráfico ANTES de capturar, para que el layout no dependa de la
+  // pantalla/ventana de quien genera el lote — y recién después se reescala
+  // el resultado a ROP_EXPORT_W×H (4K) con un canvas intermedio.
   const frame = document.getElementById('rop-export-frame');
+  const prevWidth = frame.style.width, prevMaxWidth = frame.style.maxWidth;
+  frame.style.maxWidth = 'none';
+  frame.style.width = ROP_CANONICAL_W + 'px';
+  Object.values(ROP.charts).forEach(c => { if (c) c.resize(); });
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   const frameRect = frame.getBoundingClientRect();
   const captureScale = Math.max(2, ROP_EXPORT_W / frameRect.width, ROP_EXPORT_H / frameRect.height);
   let canvas = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    canvas = await html2canvas(frame, { backgroundColor: null, scale: captureScale, useCORS: true });
-    if (canvas.width && canvas.height) break;
-    await new Promise(r => setTimeout(r, 500 + attempt * 300));
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      canvas = await html2canvas(frame, { backgroundColor: null, scale: captureScale, useCORS: true });
+      if (canvas.width && canvas.height) break;
+      await new Promise(r => setTimeout(r, 500 + attempt * 300));
+    }
+  } finally {
+    frame.style.width = prevWidth;
+    frame.style.maxWidth = prevMaxWidth;
+    Object.values(ROP.charts).forEach(c => { if (c) c.resize(); });
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   }
   const target = document.createElement('canvas');
   target.width = ROP_EXPORT_W;

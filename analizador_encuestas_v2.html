@@ -7388,6 +7388,38 @@ function rcpRenderHealthCheck(moduleTag) {
     </details>`;
   }).join('');
 
+  // Alto Engagement/Alto Agotamiento: solo en el panel de R (Tablas Excel).
+  // RCP (Gráficos Predeterminados) ya tiene su propia visibilidad/override
+  // para estos dos flags, pero por-gráfico (RCP_FLAG_VAR_DEFS, dentro del
+  // panel "Columnas detectadas" de cada gráfico que los usa) — mostrarlos
+  // acá también sería duplicado y con otra clave de override. R no tenía
+  // ninguna de las dos cosas: rCalcAltoEng/rCalcAltoAgo detectaban la
+  // columna por regex sin pasar nunca por R.colOverrides.
+  let flagRowsHtml = '';
+  if (moduleTag === 'R') {
+    const flagRow = (label, idx) => {
+      const colName = idx >= 0 ? headers[idx] : null;
+      const key = label === 'Alto Engagement (columna binaria)' ? 'FLAG:altoEng' : 'FLAG:altoAgot';
+      const icon = colName ? '✓' : '✗';
+      const color = colName ? '#2E7D32' : '#B23B2E';
+      const overrideSel = reg.editable ? `
+        <select onchange="rcpHealthSetOverride('${moduleTag}','${escJsAttr(key)}', this.value)"
+          style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:220px">
+          <option value="">— automático —</option>
+          ${headers.map(h => `<option value="${escHtml(h)}" ${overrides[key] === h ? 'selected' : ''}>${escHtml(h)}</option>`).join('')}
+        </select>` : '';
+      return `<details style="border-bottom:1px solid var(--border);padding:4px 0">
+        <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+          <span style="color:${color};width:14px;flex-shrink:0">${icon}</span>
+          <span style="flex:0 0 190px">${escHtml(label)}</span>
+          <span style="flex:1;min-width:140px">${colName ? `<code>${escHtml(colName)}</code>` : `<span style="color:var(--text2)">no encontrada — se calcula desde los ítems</span>`}</span>
+          ${overrideSel}
+        </summary>
+      </details>`;
+    };
+    flagRowsHtml = flagRow('Alto Engagement (columna binaria)', rFindAltoEngCol()) + flagRow('Alto Agotamiento (columna binaria)', rFindAltoAgoCol());
+  }
+
   container.style.display = '';
   container.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:1rem;border-color:${allOk ? 'var(--accent-border)' : '#E0A0A0'}">
     <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${allOk ? '#2E7D32' : '#B23B2E'}">
@@ -7395,7 +7427,7 @@ function rcpRenderHealthCheck(moduleTag) {
     </div>
     <details style="margin-top:8px">
       <summary style="cursor:pointer;font-size:12px;color:var(--text2)">Ver detalle de las 14 dimensiones${reg.editable ? ' (y corregir si hace falta)' : ''}</summary>
-      <div style="margin-top:8px">${rowsHtml}</div>
+      <div style="margin-top:8px">${rowsHtml}${flagRowsHtml}</div>
     </details>
   </div>`;
 }
@@ -9789,16 +9821,46 @@ function rSubDimMean(rows, sub) {
   return itemVals.length ? +(itemVals.reduce((a,b)=>a+b,0)/itemVals.length).toFixed(2) : null;
 }
 
+// Columnas binarias "Alto Engagement"/"Alto Agotamiento" — igual que en One
+// Page (ver ropFindAltoEngCol/ropFindAltoAgotCol), se detectan por nombre de
+// columna, no por código de ítem como el resto de R_DIMS, así que no tenían
+// ninguna forma de verse ni corregirse en el panel "Columnas detectadas" de
+// Tablas Excel. Mismas claves de override ('FLAG:altoEng'/'FLAG:altoAgot')
+// que usa One Page, aunque R.colOverrides es un objeto aparte (sin choque).
+function rFindAltoEngCol() {
+  const key = 'FLAG:altoEng';
+  if (R.colOverrides && Object.prototype.hasOwnProperty.call(R.colOverrides, key)) {
+    const v = R.colOverrides[key];
+    return v ? R.headers.indexOf(v) : -1;
+  }
+  return R.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(rNorm(h).replace(/\s/g,'')));
+}
+function rFindAltoAgoCol() {
+  const key = 'FLAG:altoAgot';
+  if (R.colOverrides && Object.prototype.hasOwnProperty.call(R.colOverrides, key)) {
+    const v = R.colOverrides[key];
+    return v ? R.headers.indexOf(v) : -1;
+  }
+  const exhaustedIdx = R.headers.findIndex(h => /^(exhausted_?b[iy]nary|high_?exhaustion)$/i.test(rNorm(h).replace(/\s/g,'')));
+  if (exhaustedIdx >= 0) return exhaustedIdx;
+  return R.headers.findIndex(h => /^(alto_?agot(amiento)?|agotamiento_?binary|high_?agotamiento)$/i.test(rNorm(h).replace(/\s/g,'')));
+}
+
 function rCalcAltoEng(rows) {
   // Use ALTO_ENGAGEMENT column (all 3 sub-dims ≥ 5), NOT VIGOR_BINARY (only vigor ≥ 5)
-  const binIdx = R.headers.findIndex(h => /^(alto_?eng(agement)?|engagement_?binary|high_?engagement|engagement_?proportion)$/i.test(rNorm(h).replace(/\s/g,'')));
+  const binIdx = rFindAltoEngCol();
+  let pct = null;
   if (binIdx >= 0) {
-    const count = rows.filter(r => parseFloat(r[binIdx]) === 1).length;
-    return rows.length ? Math.round(count / rows.length * 100) : null;
+    const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
+    if (vals.length) pct = Math.round(vals.filter(v => v === 1).length / vals.length * 100);
   }
+  // Si la columna binaria no existe, o existe pero no trae valor para estas
+  // filas (ej. medición en curso aún no cerrada por la plataforma), se cae
+  // al cálculo por ítems — mismo fix que se hizo en One Page para este caso.
+  if (pct !== null) return pct;
   const weGroups = [['WE1','WE2','WE5'],['WE3','WE4','WE7'],['WE6','WE8','WE9']];
   const hasItems = weGroups.flat().some(c => rItemIdx(c) >= 0);
-  if (!hasItems) return null;
+  if (!hasItems || !rows.length) return null;
   const count = rows.filter(row => weGroups.every(items => {
     const vals = items.map(c => { const i=rItemIdx(c); return i>=0?parseFloat(row[i]):NaN; }).filter(v=>!isNaN(v));
     return vals.length && vals.reduce((a,b)=>a+b,0)/vals.length >= 5;
@@ -9809,16 +9871,16 @@ function rCalcAltoEng(rows) {
 function rCalcAltoAgo(rows) {
   // Prioridad: EXHAUSTED_BYNARY (u otra variante "exhausted") si existe esa col exacta;
   // si no, cae a ALTO_AGOTAMIENTO/variantes ("alto agot", "agotamiento_binary", etc.)
-  const exhaustedIdx = R.headers.findIndex(h => /^(exhausted_?b[iy]nary|high_?exhaustion)$/i.test(rNorm(h).replace(/\s/g,'')));
-  const altoAgotIdx  = R.headers.findIndex(h => /^(alto_?agot(amiento)?|agotamiento_?binary|high_?agotamiento)$/i.test(rNorm(h).replace(/\s/g,'')));
-  const binIdx = exhaustedIdx >= 0 ? exhaustedIdx : altoAgotIdx;
+  const binIdx = rFindAltoAgoCol();
+  let pct = null;
   if (binIdx >= 0) {
-    const count = rows.filter(r => parseFloat(r[binIdx]) === 1).length;
-    return rows.length ? Math.round(count / rows.length * 100) : null;
+    const vals = rows.map(r => parseFloat(r[binIdx])).filter(v => !isNaN(v));
+    if (vals.length) pct = Math.round(vals.filter(v => v === 1).length / vals.length * 100);
   }
+  if (pct !== null) return pct;
   const exItems = ['EX1','EX2','EX3','EX4'];
   const exIdxs = exItems.map(c => rItemIdx(c)).filter(i => i >= 0);
-  if (!exIdxs.length) return null;
+  if (!exIdxs.length || !rows.length) return null;
   const count = rows.filter(row => {
     const vals = exIdxs.map(i => parseFloat(row[i])).filter(v => !isNaN(v));
     return vals.length && vals.reduce((a,b)=>a+b,0)/vals.length >= 3.25;

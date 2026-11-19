@@ -298,7 +298,13 @@ tr:hover td { background: var(--bg); }
 .rop-chart-title { font-size:13px; font-weight:700; color:var(--text1); margin-bottom:8px; letter-spacing:.02em; text-transform:uppercase; }
 .rop-rd-header { background:#222; color:#fff; font-size:12px; font-weight:700; letter-spacing:.06em; text-align:center; padding:7px 14px; margin:-14px -14px 0; border-radius:var(--radius) var(--radius) 0 0; }
 .rop-axis-label { writing-mode:vertical-rl; transform:rotate(180deg); font-size:9px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; display:flex; align-items:center; justify-content:center; min-width:14px; }
-.rop-summary-row { margin-top:10px; padding:7px 10px; background:#f8f8f8; border-radius:6px; display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; font-size:11px; color:var(--text2); border-top:1px solid var(--border); }
+/* Antes era una sola fila flex que envolvía (wrap) sin orden fijo — con
+   textos largos (nombre de medición/segmento) se veía "raro": a veces el %
+   quedaba pegado al promedio, a veces se cortaba a una línea nueva en medio
+   de una frase. Ahora son 3 filas apiladas siempre en el mismo orden:
+   título, promedio, %. */
+.rop-summary-row { margin-top:10px; padding:7px 10px; background:#f8f8f8; border-radius:6px; display:flex; flex-direction:column; justify-content:center; gap:3px; font-size:11px; color:var(--text2); border-top:1px solid var(--border); }
+.rop-sum-line { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
 .rop-sum-label { font-weight:700; color:var(--text1); }
 .rop-sum-val { font-size:15px; font-weight:800; color:var(--accent); }
 .rop-sum-pct { font-size:15px; font-weight:800; color:var(--ok); }
@@ -10472,7 +10478,8 @@ let ROP = {
   filters: [],
   charts:{ eng:null, agot:null, rd:null, enps:null },
   colOverrides: {},
-  colors: null // se inicializa desde ROP_COLOR_PRESETS.default en ropInitColors()
+  colors: null, // se inicializa desde ROP_COLOR_PRESETS.default en ropInitColors()
+  rdOrientation: 'horizontal' // 'horizontal' | 'diagonal' — nombres de palancas en Recursos y Demandas
 };
 
 const ROP_RECURSOS = ['oportunidades','coaching','retroalimentacion','colaboracion','autonomia','optimismo','autoeficacia'];
@@ -10547,7 +10554,7 @@ const ROP_STYLE_STORAGE_KEY = 'ropOnePageStyle_v1';
 
 function ropSaveStyleToStorage() {
   try {
-    localStorage.setItem(ROP_STYLE_STORAGE_KEY, JSON.stringify({ colors: ROP.colors, fonts: ROP.fonts }));
+    localStorage.setItem(ROP_STYLE_STORAGE_KEY, JSON.stringify({ colors: ROP.colors, fonts: ROP.fonts, rdOrientation: ROP.rdOrientation }));
   } catch (e) { /* storage bloqueado/lleno/privado — no es crítico, se sigue trabajando en memoria */ }
 }
 
@@ -10564,6 +10571,13 @@ function ropInitColors() {
   if (ROP.colors) return;
   const saved = ropLoadStyleFromStorage();
   ROP.colors = (saved && saved.colors) ? { ...ROP_COLOR_PRESETS.default, ...saved.colors } : { ...ROP_COLOR_PRESETS.default };
+}
+
+function ropInitRdOrientation() {
+  if (ROP._rdOrientationLoaded) return;
+  ROP._rdOrientationLoaded = true;
+  const saved = ropLoadStyleFromStorage();
+  if (saved && saved.rdOrientation === 'diagonal') ROP.rdOrientation = 'diagonal';
 }
 
 function ropSetColor(key, value) {
@@ -10736,9 +10750,22 @@ function ropSetFont(role, field, value) {
 // (que leería el storage y devolvería lo mismo que se quiere descartar).
 function ropResetFonts() {
   ROP.fonts = ropFontsFromDefaults();
+  ROP.rdOrientation = 'horizontal';
   ropSaveStyleToStorage();
   ropRenderFontPanel();
   if (document.getElementById('rop-preview').style.display !== 'none') { ropApplyStaticFonts(); ropGenerate(true); }
+}
+
+// Horizontal (por defecto) parte el nombre de la palanca en varias líneas
+// para que quepa sin encimarse con la de al lado (ver ropWrapLines);
+// diagonal rota el texto 20-40° (el ángulo que ya tenían antes del fix de
+// superposición) en una sola línea sin partir — permite agrandar la letra
+// con más margen que horizontal antes de que las 12 palancas se junten
+// entre sí, sin llegar a vertical puro.
+function ropSetRdOrientation(value) {
+  ROP.rdOrientation = value === 'diagonal' ? 'diagonal' : 'horizontal';
+  ropSaveStyleToStorage();
+  if (document.getElementById('rop-preview').style.display !== 'none') ropGenerate(true);
 }
 
 // Aplica los roles que NO son gráficos de Chart.js (título, etiquetas
@@ -10802,6 +10829,15 @@ function ropRenderFontPanel() {
           style="width:24px;height:20px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer">
         ${d.color === null ? `<button type="button" class="btn btn-secondary" style="font-size:10px;padding:2px 6px" onclick="ropSetFont('${role}','color','')">auto</button>` : ''}
       </label>
+      ${role === 'rdAxis' ? `
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2)">
+        Orientación
+        <select onchange="ropSetRdOrientation(this.value)"
+          style="font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+          <option value="horizontal" ${ROP.rdOrientation !== 'diagonal' ? 'selected' : ''}>Horizontal</option>
+          <option value="diagonal" ${ROP.rdOrientation === 'diagonal' ? 'selected' : ''}>Diagonal</option>
+        </select>
+      </label>` : ''}
     </div>`;
   }).join('') + `
     <div style="margin-top:8px">
@@ -10826,7 +10862,8 @@ function ropToggleFontPanel() {
 function ropDownloadStyle() {
   ropInitColors();
   ropInitFonts();
-  const data = { _tipo: 'analizador_encuestas_onepage_estilo', _version: 1, colors: ROP.colors, fonts: ROP.fonts };
+  ropInitRdOrientation();
+  const data = { _tipo: 'analizador_encuestas_onepage_estilo', _version: 1, colors: ROP.colors, fonts: ROP.fonts, rdOrientation: ROP.rdOrientation };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -10848,6 +10885,7 @@ function ropLoadStyleFile(e) {
       }
       ropInitColors();
       ropInitFonts();
+      ropInitRdOrientation();
       if (data.colors) ROP.colors = { ...ROP_COLOR_PRESETS.default, ...data.colors };
       if (data.fonts) {
         const defaults = ropFontsFromDefaults();
@@ -10858,6 +10896,7 @@ function ropLoadStyleFile(e) {
             : defaults[k];
         });
       }
+      if (data.rdOrientation) ROP.rdOrientation = data.rdOrientation === 'diagonal' ? 'diagonal' : 'horizontal';
       ropSaveStyleToStorage();
       ropRenderColorPanel();
       ropRenderFontPanel();
@@ -11535,6 +11574,7 @@ function ropGetNMin() {
 function ropGenerate(skipScroll) {
   ropInitColors();
   ropInitFonts();
+  ropInitRdOrientation();
   ROP_N_MIN = ropGetNMin();
   const showOrg = document.getElementById('rop-show-org').checked;
   // Opciones de limpieza para exportación
@@ -11933,9 +11973,9 @@ function ropRenderEng(filterSets, showOrg) {
   if (showOrg && engOrg && engOrg.avg != null) {
     sumEl.style.display = 'flex';
     sumEl.innerHTML =
-      `<span class="rop-sum-label">Promedio Organizacional</span>` +
-      `<span>Promedio de Engagement:</span><span class="rop-sum-val">${engOrg.avg.toFixed(2)}</span>` +
-      (engOrg.pct != null ? `<span>% personas en Alto Engagement:</span><span class="rop-sum-pct">${engOrg.pct.toFixed(0)}%</span>` : '');
+      `<div class="rop-sum-line"><span class="rop-sum-label">Promedio Organizacional</span></div>` +
+      `<div class="rop-sum-line"><span>Promedio de Engagement:</span><span class="rop-sum-val">${engOrg.avg.toFixed(2)}</span></div>` +
+      (engOrg.pct != null ? `<div class="rop-sum-line"><span>% personas en Alto Engagement:</span><span class="rop-sum-pct">${engOrg.pct.toFixed(0)}%</span></div>` : '');
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaEng = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
@@ -12010,9 +12050,9 @@ function ropRenderAgot(filterSets, showOrg) {
   if (showOrg && agotOrg && agotOrg.avg != null) {
     sumEl.style.display = 'flex';
     sumEl.innerHTML =
-      `<span class="rop-sum-label">Promedio Organizacional</span>` +
-      `<span>Promedio de Agotamiento:</span><span class="rop-sum-val" style="color:#ef4444">${agotOrg.avg.toFixed(2)}</span>` +
-      (agotOrg.pct != null ? `<span>% personas en Alto Agotamiento:</span><span class="rop-sum-pct" style="color:#f59e0b">${agotOrg.pct.toFixed(0)}%</span>` : '');
+      `<div class="rop-sum-line"><span class="rop-sum-label">Promedio Organizacional</span></div>` +
+      `<div class="rop-sum-line"><span>Promedio de Agotamiento:</span><span class="rop-sum-val" style="color:#ef4444">${agotOrg.avg.toFixed(2)}</span></div>` +
+      (agotOrg.pct != null ? `<div class="rop-sum-line"><span>% personas en Alto Agotamiento:</span><span class="rop-sum-pct" style="color:#f59e0b">${agotOrg.pct.toFixed(0)}%</span></div>` : '');
   } else { sumEl.style.display = 'none'; }
 
   const filterMetaAgot = filterSets.map(fs => fs.rows.length === 0 ? 'nodata' : fs.rows.length < ROP_N_MIN ? 'confidential' : 'ok');
@@ -12102,7 +12142,12 @@ function ropRenderRD(filterSets) {
   filterSets = filterSets.slice(0, 2);
   const dimIds = [...ROP_RECURSOS, ...ROP_DEMANDAS];
   const dims = dimIds.map(id => MAESTRO.find(d => d.id === id)).filter(Boolean);
-  const labels = dims.map(d => ropWrapLines(d.nombre, 12));
+  // En diagonal el nombre entero va en una sola línea rotada (igual que
+  // antes del fix de superposición, pero ahora sin combinar con el wrap en
+  // varias líneas, que era justo lo que causaba el choque entre palancas
+  // vecinas); en horizontal se sigue partiendo en varias líneas sin rotar.
+  const isDiagonal = ROP.rdOrientation === 'diagonal';
+  const labels = dims.map(d => isDiagonal ? d.nombre : ropWrapLines(d.nombre, 12));
   // Per-dimension colors — order must match ROP_RECURSOS + ROP_DEMANDAS (= RD_ORDER of main chart)
   // ROP_RECURSOS: oportunidades, coaching, retroalimentacion, colaboracion, autonomia, optimismo, autoeficacia
   // ROP_DEMANDAS: presion, cognitivas, emocionales, conflictoderol, trabas
@@ -12198,13 +12243,17 @@ function ropRenderRD(filterSets) {
       },
       scales:{
         y:{ min:1, max:5, ticks:{stepSize:1,font:rdAxisFont,color:rdAxisColor}, grid:{color:'rgba(0,0,0,.05)'} },
-        // Antes rotaba 20-40° combinado con el wrap en varias líneas — esa
-        // combinación (array de líneas + rotación) hacía que Chart.js calculara
-        // mal el espacio de cada etiqueta y las palancas vecinas se encimaran
-        // (reportado con capturas: "Coaching del líder" sobre "Oportunidades de
-        // desarrollo"). Mismo fix que Engagement/Agotamiento: siempre horizontal,
-        // confiando en ropWrapLines para partir en líneas en vez de rotar.
-        x:{ grid:{display:false}, ticks:{font:rdAxisFontX, color:rdAxisColor, maxRotation:0, minRotation:0, autoSkip:false} }
+        // Antes rotaba 20-40° SIEMPRE, combinado con el wrap en varias líneas —
+        // esa combinación (array de líneas + rotación) hacía que Chart.js
+        // calculara mal el espacio de cada etiqueta y las palancas vecinas se
+        // encimaran (reportado con capturas: "Coaching del líder" sobre
+        // "Oportunidades de desarrollo"). Ahora es un toggle del usuario:
+        // horizontal usa ropWrapLines (varias líneas, sin rotar); diagonal
+        // vuelve a esos mismos 20-40° pero con el nombre en una sola línea
+        // (sin combinarlo con el wrap), que es lo que evita el choque — y de
+        // paso deja más margen que horizontal para subir el tamaño de letra.
+        x:{ grid:{display:false}, ticks:{font:rdAxisFontX, color:rdAxisColor,
+          maxRotation: isDiagonal ? 40 : 0, minRotation: isDiagonal ? 20 : 0, autoSkip:false} }
       }
     }
   });
@@ -12453,6 +12502,7 @@ async function ropBatchRenderOne(filterSpec) {
   document.getElementById('rop-seg-title').textContent  = ropHideTitle ? '' : filterSpec.titleLabel;
   ropInitColors();
   ropInitFonts();
+  ropInitRdOrientation();
   ropApplyStaticFonts();
   // El lote exporta un segmento a la vez — no aplica la nota de "segmentos comparados"
   const batchFootEl = document.getElementById('rop-footnote');

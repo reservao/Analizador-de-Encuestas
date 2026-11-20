@@ -11872,6 +11872,13 @@ const ropPctBadgePlugin = {
 };
 
 // Draws eNPS score circles to the right of horizontal stacked bars
+function ropContrastText(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return '#1a1a1a';
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? '#1a1a1a' : '#ffffff';
+}
 const ropEnpsSegLabels = {
   id:'ropEnpsSegLabels',
   afterDatasetsDraw(chart) {
@@ -11886,6 +11893,7 @@ const ropEnpsSegLabels = {
     // (reportado con capturas). Ahora se juntan todos los segmentos de la
     // fila primero, y los angostos se apilan uno arriba del otro en vez de
     // superponerse.
+    ropInitColors();
     for (let i = 0; i < numRows; i++) {
       const segs = [];
       datasets.forEach((ds, di) => {
@@ -11895,44 +11903,103 @@ const ropEnpsSegLabels = {
         if (v == null) return;
         const bar = meta.data[i];
         if (!bar) return;
-        segs.push({ bar, v });
+        // Color del rol eNPS que le corresponde a este dataset (mismo orden
+        // fijo que arma ropRenderENPS: Detractores, Neutros, Promotores) —
+        // apilar las etiquetas angostas ya resolvía que no se encimaran,
+        // pero sin esto no se distinguía cuál número era de cuál segmento
+        // (reportado: "se confunde y no queda claro cuál es cuál").
+        const segColor = di === 0 ? ROP.colors.enpsDetractor : di === 1 ? ROP.colors.enpsNeutro : ROP.colors.enpsPromotor;
+        segs.push({ bar, v, segColor });
       });
       if (!segs.length) continue;
       ctx.save();
       ctx.font = ropCanvasFont('enpsValue', 13, true);
       const narrow = [];
-      segs.forEach(({ bar, v }) => {
+      segs.forEach(({ bar, v, segColor }) => {
+        const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
+        // Si redondea a 0% no se dibuja nada para ese segmento — un "0.0%"
+        // no aporta información (no hay nadie en ese grupo) y es ruido
+        // justo en la zona más apretada del gráfico (pedido del usuario).
+        if (txt === '0.0%' || txt === '0%') return;
         const barW = Math.abs(bar.x - bar.base);
         const cx = (bar.base + bar.x) / 2;
-        const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
         const textW = ctx.measureText(txt).width;
+        const barH = bar.height || 32;
+        // Fuente más chica reservada para el modo rotado: un segmento angosto
+        // alcanza para el ALTO de la barra pero casi nunca para el ancho
+        // completo del texto horizontal a 13px — bajar a 10px da margen real
+        // para que la etiqueta rotada no quede recortada contra los bordes
+        // del segmento (medido con casos reales de eNPS <10%, ver scratchpad).
+        // El ancho a 10px se estima por proporción (10/13) para no tener que
+        // cambiar ctx.font solo para medir y así no afectar el resto del loop.
+        const rotTextW = textW * (10 / 13);
+        const rotFont = ropCanvasFont('enpsValue', 10, true);
         if (barW >= textW + 10) {
-          // Cabe dentro del segmento: texto centrado
+          // Cabe dentro del segmento: texto centrado (blanco/oscuro fijo —
+          // acá SÍ hay suficiente contraste contra el propio fondo de color).
           ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(txt, cx, bar.y);
+        } else if (v < 10 && barW >= 16 && barH >= rotTextW + 4) {
+          // Segmento angosto pero con valor chico (<10%): en vez de sacar la
+          // etiqueta fuera de la barra, se rota -90° y queda vertical DENTRO
+          // del mismo segmento (el alto de la barra sí alcanza aunque el
+          // ancho no) — pedido del usuario para no perder la referencia
+          // visual de a qué segmento pertenece cada número.
+          ctx.save();
+          ctx.translate(cx, bar.y);
+          ctx.rotate(-Math.PI / 2);
+          ctx.font = rotFont;
+          ctx.fillStyle = ropFontColor('enpsValue', ropContrastText(segColor));
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(txt, 0, 0);
+          ctx.restore();
         } else {
-          // Segmento muy angosto (ej. Detractores bajo): se dibuja arriba de
-          // la barra, con el resto de los angostos de esta misma fila (ver abajo).
-          narrow.push({ bar, txt, cx });
+          // Ni horizontal ni vertical caben: se dibuja arriba de la barra,
+          // con el resto de los angostos de esta misma fila (ver abajo).
+          narrow.push({ bar, txt, cx, segColor });
         }
       });
-      narrow.forEach(({ bar, txt, cx }, idx) => {
+      // Piso para no invadir la fila de arriba: el espacio entre barras es
+      // chico (filas muy juntas), así que apilar sin límite terminaba
+      // dibujando la etiqueta DENTRO de la barra de la medición anterior —
+      // se veía como si ese número perteneciera a la fila de arriba (bug
+      // real encontrado al verificar el modo rotado con casos de eNPS muy
+      // bajo en varias filas seguidas).
+      const prevBar = i > 0 ? chart.getDatasetMeta(0).data[i - 1] : null;
+      const prevBottom = prevBar ? prevBar.y + (prevBar.height || 32) / 2 : -Infinity;
+      let lastClampedY = null;
+      narrow.forEach(({ bar, txt, cx, segColor }, idx) => {
         const halfH = (bar.height || 32) / 2;
         // idx*13: cada segmento angosto adicional de la misma fila sube un
         // poco más, para no quedar a la misma altura que el anterior.
-        const topY = bar.y - halfH - 14 - idx * 13;
-        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        const topY = Math.max(bar.y - halfH - 14 - idx * 13, prevBottom + 10);
+        // Si el piso de arriba obligó a DOS etiquetas de esta misma fila a
+        // caer en la misma altura (gap entre filas demasiado chico para
+        // apilarlas), se separan en horizontal en vez de quedar una encima
+        // de la otra — la línea guía queda diagonal pero sigue apuntando a
+        // su propio segmento.
+        const collided = lastClampedY !== null && Math.abs(topY - lastClampedY) < 2;
+        const textX = collided ? cx + (idx % 2 === 0 ? -24 : 24) : cx;
+        lastClampedY = topY;
+        // Línea guía y texto del color del propio segmento (igual que la
+        // leyenda de abajo) — así se identifica de un vistazo cuál número es
+        // Detractores/Neutros/Promotores aunque estén apilados muy juntos.
+        // ropFontColor respeta un color manual del usuario si lo configuró
+        // (panel de textos); si no, cae a este color por segmento.
+        const col = ropFontColor('enpsValue', segColor);
+        ctx.strokeStyle = col;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(cx, bar.y - halfH);
-        ctx.lineTo(cx, topY + 11);
+        ctx.lineTo(textX, topY + 11);
         ctx.stroke();
-        ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
+        ctx.fillStyle = col;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(txt, cx, topY);
+        ctx.fillText(txt, textX, topY);
       });
       ctx.restore();
     }

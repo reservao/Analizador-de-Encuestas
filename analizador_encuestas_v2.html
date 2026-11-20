@@ -11967,51 +11967,38 @@ const ropEnpsSegLabels = {
           narrow.push({ bar, txt, cx, segColor });
         }
       });
-      // Piso para no invadir la fila de arriba: el espacio entre barras es
-      // chico (filas muy juntas), así que apilar sin límite terminaba
-      // dibujando la etiqueta DENTRO de la barra de la medición anterior —
-      // se veía como si ese número perteneciera a la fila de arriba (bug
-      // real encontrado al verificar el modo rotado con casos de eNPS muy
-      // bajo en varias filas seguidas).
-      const prevBar = i > 0 ? chart.getDatasetMeta(0).data[i - 1] : null;
-      const prevBottom = prevBar ? prevBar.y + (prevBar.height || 32) / 2 : -Infinity;
-      let lastClampedY = null;
-      narrow.forEach(({ bar, txt, cx, segColor }, idx) => {
-        const halfH = (bar.height || 32) / 2;
-        // idx*13: cada segmento angosto adicional de la misma fila sube un
-        // poco más, para no quedar a la misma altura que el anterior.
-        const topY = Math.max(bar.y - halfH - 14 - idx * 13, prevBottom + 10);
-        // Si el piso de arriba obligó a DOS etiquetas de esta misma fila a
-        // caer en la misma altura (gap entre filas demasiado chico para
-        // apilarlas), se separan en horizontal en vez de quedar una encima
-        // de la otra — la línea guía queda diagonal pero sigue apuntando a
-        // su propio segmento.
-        const collided = lastClampedY !== null && Math.abs(topY - lastClampedY) < 2;
-        const textX = collided ? cx + (idx % 2 === 0 ? -24 : 24) : cx;
-        lastClampedY = topY;
-        // Línea guía y texto del color del propio segmento (igual que la
-        // leyenda de abajo) — así se identifica de un vistazo cuál número es
-        // Detractores/Neutros/Promotores aunque estén apilados muy juntos.
-        // ropFontColor respeta un color manual del usuario si lo configuró
-        // (panel de textos); si no, cae a este color por segmento.
-        // Si hubo colisión, la línea quedaría en diagonal apuntando a un
-        // punto que no es el propio segmento — más confuso que útil
-        // (reportado: "las líneas no tienen sentido") — así que en ese caso
-        // se omite del todo y basta el color del texto para identificarlo.
-        const col = ropFontColor('enpsValue', segColor);
-        if (!collided) {
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(cx, bar.y - halfH);
-          ctx.lineTo(textX, topY + 11);
-          ctx.stroke();
-        }
-        ctx.fillStyle = col;
-        ctx.textAlign = 'center';
+      // Los segmentos que no entran ni horizontal ni rotados (caso extremo:
+      // <1% del eje) ya NO se apilan uno arriba del otro con líneas guía —
+      // apilar+clamp producía etiquetas superpuestas entre sí cuando dos
+      // caían muy juntas, y además "flotando" lejos de su barra sin nada
+      // que las conecte visualmente (reportado dos veces: "quedan
+      // superpuestos" y "las líneas no tienen sentido"). En vez de eso se
+      // arma UNA sola línea de texto por fila, con todos los valores
+      // angostos uno al lado del otro (coloreados cada uno como su
+      // segmento), pegada justo arriba de la propia barra — sin stacking
+      // vertical no hay con qué superponerse, y al estar siempre a la misma
+      // distancia fija de su propia barra no "flota" sin relación visual.
+      if (narrow.length) {
+        ctx.font = ropCanvasFont('enpsValue', 13, true);
+        const rowBar = narrow[0].bar;
+        const halfH = (rowBar.height || 32) / 2;
+        const sep = '   ';
+        const widths = narrow.map(n => ctx.measureText(n.txt).width);
+        const sepW = ctx.measureText(sep).width;
+        const totalW = widths.reduce((a, b) => a + b, 0) + sepW * (narrow.length - 1);
+        const avgCx = narrow.reduce((a, n) => a + n.cx, 0) / narrow.length;
+        const prevBar = i > 0 ? chart.getDatasetMeta(0).data[i - 1] : null;
+        const prevBottom = prevBar ? prevBar.y + (prevBar.height || 32) / 2 : -Infinity;
+        const topY = Math.max(rowBar.y - halfH - 6, prevBottom + 10);
+        let x = avgCx - totalW / 2;
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(txt, textX, topY);
-      });
+        narrow.forEach((n, idx) => {
+          ctx.fillStyle = ropFontColor('enpsValue', n.segColor);
+          ctx.fillText(n.txt, x, topY);
+          x += widths[idx] + sepW;
+        });
+      }
       ctx.restore();
     }
   }

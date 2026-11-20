@@ -11876,17 +11876,35 @@ const ropEnpsSegLabels = {
   id:'ropEnpsSegLabels',
   afterDatasetsDraw(chart) {
     const ctx = chart.ctx;
-    chart.data.datasets.forEach((ds, di) => {
-      const meta = chart.getDatasetMeta(di);
-      if (meta.hidden) return;
-      meta.data.forEach((bar, i) => {
+    const datasets = chart.data.datasets;
+    const numRows = chart.data.labels.length;
+    // Recorre por FILA (medición), no por dataset — antes se dibujaba cada
+    // segmento sin saber nada de sus vecinos, así que cuando DOS segmentos
+    // angostos de la misma fila (ej. Detractores 0% y Neutros 0.5%, ambos
+    // chicos) necesitaban su etiqueta arriba de la barra, las dos terminaban
+    // dibujándose en el mismo punto y el texto quedaba ilegible/encimado
+    // (reportado con capturas). Ahora se juntan todos los segmentos de la
+    // fila primero, y los angostos se apilan uno arriba del otro en vez de
+    // superponerse.
+    for (let i = 0; i < numRows; i++) {
+      const segs = [];
+      datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
         const v = ds.data[i];
         if (v == null) return;
+        const bar = meta.data[i];
+        if (!bar) return;
+        segs.push({ bar, v });
+      });
+      if (!segs.length) continue;
+      ctx.save();
+      ctx.font = ropCanvasFont('enpsValue', 13, true);
+      const narrow = [];
+      segs.forEach(({ bar, v }) => {
         const barW = Math.abs(bar.x - bar.base);
         const cx = (bar.base + bar.x) / 2;
         const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
-        ctx.save();
-        ctx.font = ropCanvasFont('enpsValue', 13, true);
         const textW = ctx.measureText(txt).width;
         if (barW >= textW + 10) {
           // Cabe dentro del segmento: texto centrado
@@ -11895,25 +11913,29 @@ const ropEnpsSegLabels = {
           ctx.textBaseline = 'middle';
           ctx.fillText(txt, cx, bar.y);
         } else {
-          // Segmento muy angosto (ej. Detractores bajo) para que el texto quepa adentro:
-          // se dibuja arriba del segmento con una pequeña línea guía, para que el valor
-          // siga siendo visible aunque el tramo de color sea casi imperceptible.
-          const halfH = (bar.height || 32) / 2;
-          const topY = bar.y - halfH - 14;
-          ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(cx, bar.y - halfH);
-          ctx.lineTo(cx, topY + 11);
-          ctx.stroke();
-          ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          ctx.fillText(txt, cx, topY);
+          // Segmento muy angosto (ej. Detractores bajo): se dibuja arriba de
+          // la barra, con el resto de los angostos de esta misma fila (ver abajo).
+          narrow.push({ bar, txt, cx });
         }
-        ctx.restore();
       });
-    });
+      narrow.forEach(({ bar, txt, cx }, idx) => {
+        const halfH = (bar.height || 32) / 2;
+        // idx*13: cada segmento angosto adicional de la misma fila sube un
+        // poco más, para no quedar a la misma altura que el anterior.
+        const topY = bar.y - halfH - 14 - idx * 13;
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx, bar.y - halfH);
+        ctx.lineTo(cx, topY + 11);
+        ctx.stroke();
+        ctx.fillStyle = ropFontColor('enpsValue', '#1a1a1a');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(txt, cx, topY);
+      });
+      ctx.restore();
+    }
   }
 };
 

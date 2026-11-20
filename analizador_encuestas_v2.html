@@ -11925,15 +11925,20 @@ const ropEnpsSegLabels = {
         const cx = (bar.base + bar.x) / 2;
         const textW = ctx.measureText(txt).width;
         const barH = bar.height || 32;
-        // Fuente más chica reservada para el modo rotado: un segmento angosto
-        // alcanza para el ALTO de la barra pero casi nunca para el ancho
-        // completo del texto horizontal a 13px — bajar a 10px da margen real
-        // para que la etiqueta rotada no quede recortada contra los bordes
-        // del segmento (medido con casos reales de eNPS <10%, ver scratchpad).
-        // El ancho a 10px se estima por proporción (10/13) para no tener que
-        // cambiar ctx.font solo para medir y así no afectar el resto del loop.
-        const rotTextW = textW * (10 / 13);
-        const rotFont = ropCanvasFont('enpsValue', 10, true);
+        // Modo rotado con fuente AUTO-AJUSTABLE: en vez de probar un tamaño
+        // fijo (10px) contra el alto disponible —lo que fallaba en la
+        // práctica porque el alto real de export varía según cuántos
+        // paneles tiene el One Page—, se calcula el tamaño de fuente más
+        // grande que SÍ entra en el alto de la barra (hasta 13px, piso 7px
+        // para que siga siendo legible) y recién ahí se decide si también
+        // entra en el ancho. Esto hace que el giro -90° se use siempre que
+        // sea geométricamente posible, sin depender de un umbral fijo que
+        // no se ajustaba a los anchos reales del export.
+        const padV = 4;
+        const rawFs = 13 * (barH - padV) / textW;
+        const rotFs = Math.max(7, Math.min(13, rawFs));
+        const rotTextW = textW * (rotFs / 13);
+        const rotFits = v < 10 && rawFs >= 6 && barW >= rotFs * 0.85 + 2 && barH >= rotTextW + 2;
         if (barW >= textW + 10) {
           // Cabe dentro del segmento: texto centrado (blanco/oscuro fijo —
           // acá SÍ hay suficiente contraste contra el propio fondo de color).
@@ -11941,7 +11946,7 @@ const ropEnpsSegLabels = {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(txt, cx, bar.y);
-        } else if (v < 10 && barW >= 16 && barH >= rotTextW + 4) {
+        } else if (rotFits) {
           // Segmento angosto pero con valor chico (<10%): en vez de sacar la
           // etiqueta fuera de la barra, se rota -90° y queda vertical DENTRO
           // del mismo segmento (el alto de la barra sí alcanza aunque el
@@ -11950,7 +11955,7 @@ const ropEnpsSegLabels = {
           ctx.save();
           ctx.translate(cx, bar.y);
           ctx.rotate(-Math.PI / 2);
-          ctx.font = rotFont;
+          ctx.font = ropCanvasFont('enpsValue', rotFs, true);
           ctx.fillStyle = ropFontColor('enpsValue', ropContrastText(segColor));
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -11989,13 +11994,19 @@ const ropEnpsSegLabels = {
         // Detractores/Neutros/Promotores aunque estén apilados muy juntos.
         // ropFontColor respeta un color manual del usuario si lo configuró
         // (panel de textos); si no, cae a este color por segmento.
+        // Si hubo colisión, la línea quedaría en diagonal apuntando a un
+        // punto que no es el propio segmento — más confuso que útil
+        // (reportado: "las líneas no tienen sentido") — así que en ese caso
+        // se omite del todo y basta el color del texto para identificarlo.
         const col = ropFontColor('enpsValue', segColor);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(cx, bar.y - halfH);
-        ctx.lineTo(textX, topY + 11);
-        ctx.stroke();
+        if (!collided) {
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(cx, bar.y - halfH);
+          ctx.lineTo(textX, topY + 11);
+          ctx.stroke();
+        }
         ctx.fillStyle = col;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';

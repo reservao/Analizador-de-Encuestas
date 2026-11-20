@@ -8389,25 +8389,81 @@ function rcpGenerate() {
           if(barDatasets.length > 0 && barDatasets.every(d => d.data[i] === null)) nullRows.add(i);
         }
 
-        chart.data.datasets.forEach((ds, di) => {
-          if(ds.type === 'line') return;
-          const meta = chart.getDatasetMeta(di);
-          if(meta.hidden) return;
-          meta.data.forEach((bar, i) => {
+        // Mismo tratamiento que ropEnpsSegLabels (One Page) para que las tres
+        // vistas de eNPS (Tablas/One Page/Predeterminados) se vean igual:
+        // ocultar <2%, rotar -90° dentro del segmento cuando el ancho no
+        // alcanza para texto horizontal pero sí hay alto, color por
+        // segmento, y una sola línea combinada (sin apilar ni líneas guía)
+        // para el resto de los casos angostos de la misma fila.
+        const segColorFor = di => di === 0 ? RCP_COLORS.detractor.border : di === 1 ? RCP_COLORS.neutro.border : RCP_COLORS.promotor.border;
+        const barDs = chart.data.datasets.map((ds, di) => ({ ds, di })).filter(x => x.ds.type !== 'line');
+        for (let i = 0; i < numRows; i++) {
+          const segs = [];
+          barDs.forEach(({ ds, di }) => {
+            const meta = chart.getDatasetMeta(di);
+            if (meta.hidden) return;
             const v = ds.data[i];
-            if(v === null || v === undefined) return;
-            const barW = Math.abs(bar.x - bar.base);
-            if(barW < 24) return;
-            const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
-            ctx.save();
-            ctx.font = '600 '+rcpFsValue(10)+'px "DM Sans",sans-serif';
-            ctx.fillStyle = '#1a1a1a';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(txt, (bar.base + bar.x) / 2, bar.y);
-            ctx.restore();
+            if (v === null || v === undefined) return;
+            const bar = meta.data[i];
+            if (!bar) return;
+            segs.push({ bar, v, segColor: segColorFor(di) });
           });
-        });
+          if (!segs.length) continue;
+          ctx.save();
+          const narrow = [];
+          segs.forEach(({ bar, v, segColor }) => {
+            if (v < 2) return;
+            const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
+            const barW = Math.abs(bar.x - bar.base);
+            const cx = (bar.base + bar.x) / 2;
+            const barH = bar.height || 32;
+            ctx.font = '600 '+rcpFsValue(10)+'px "DM Sans",sans-serif';
+            const textW = ctx.measureText(txt).width;
+            const padV = 4;
+            const rawFs = rcpFsValue(10) * (barH - padV) / textW;
+            const rotFs = Math.max(6, Math.min(rcpFsValue(10), rawFs));
+            const rotTextW = textW * (rotFs / rcpFsValue(10));
+            const rotFits = v < 10 && rawFs >= 5 && barW >= rotFs * 0.85 + 2 && barH >= rotTextW + 2;
+            if (barW >= textW + 10) {
+              ctx.fillStyle = '#1a1a1a';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(txt, cx, bar.y);
+            } else if (rotFits) {
+              ctx.save();
+              ctx.translate(cx, bar.y);
+              ctx.rotate(-Math.PI / 2);
+              ctx.font = '600 '+rotFs+'px "DM Sans",sans-serif';
+              ctx.fillStyle = ropContrastText(segColor);
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(txt, 0, 0);
+              ctx.restore();
+            } else {
+              narrow.push({ bar, txt, cx, segColor });
+            }
+          });
+          if (narrow.length) {
+            ctx.font = '600 '+rcpFsValue(10)+'px "DM Sans",sans-serif';
+            const rowBar = narrow[0].bar;
+            const halfH = (rowBar.height || 32) / 2;
+            const sep = '   ';
+            const widths = narrow.map(n => ctx.measureText(n.txt).width);
+            const sepW = ctx.measureText(sep).width;
+            const totalW = widths.reduce((a, b) => a + b, 0) + sepW * (narrow.length - 1);
+            const avgCx = narrow.reduce((a, n) => a + n.cx, 0) / narrow.length;
+            const topY = rowBar.y - halfH - 6;
+            let x = avgCx - totalW / 2;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+            narrow.forEach((n, idx) => {
+              ctx.fillStyle = n.segColor;
+              ctx.fillText(n.txt, x, topY);
+              x += widths[idx] + sepW;
+            });
+          }
+          ctx.restore();
+        }
 
         // Draw "Confidencial (N < mín)" text for nmin-filtered rows — once per row
         if(nullRows.size === 0) return;

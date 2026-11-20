@@ -11917,10 +11917,11 @@ const ropEnpsSegLabels = {
       const narrow = [];
       segs.forEach(({ bar, v, segColor }) => {
         const txt = v < 10 ? (+v).toFixed(1)+'%' : Math.round(+v)+'%';
-        // Si redondea a 0% no se dibuja nada para ese segmento — un "0.0%"
-        // no aporta información (no hay nadie en ese grupo) y es ruido
-        // justo en la zona más apretada del gráfico (pedido del usuario).
-        if (txt === '0.0%' || txt === '0%') return;
+        // Debajo de 2% no se dibuja ningún número — a ese tamaño el
+        // segmento es apenas una línea de color y el número no aporta,
+        // solo ensucia la zona más apretada del gráfico (pedido del
+        // usuario, ampliando el "si redondea a 0% no se muestra" original).
+        if (v < 2) return;
         const barW = Math.abs(bar.x - bar.base);
         const cx = (bar.base + bar.x) / 2;
         const textW = ctx.measureText(txt).width;
